@@ -1,0 +1,35 @@
+<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    @media (prefers-color-scheme: light) {
+      .background { fill: black; }
+      .foreground { stroke: white; }
+    }
+    @media (prefers-color-scheme: dark) {
+      .background { fill: white; }
+      .foreground { stroke: black; }
+    }
+  </style>
+
+  <g clip-path="url(#clip0)">
+    <rect class="background" width="180" height="180" rx="37"/>
+
+    <g class="foreground" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+
+      <!-- magnifying glass -->
+      <circle cx="78" cy="78" r="40" fill="none"/>
+
+      <!-- handle -->
+      <line x1="108" y1="108" x2="148" y2="148"/>
+
+      <!-- checkmark -->
+      <polyline points="58,82 74,98 102,60" fill="none"/>
+
+    </g>
+  </g>
+
+  <defs>
+    <clipPath id="clip0">
+      <rect width="180" height="180" fill="white"/>
+    </clipPath>
+  </defs>
+</svg>

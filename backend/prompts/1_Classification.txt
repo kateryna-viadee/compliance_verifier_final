@@ -1,0 +1,33 @@
+# Role
+You are an expert compliance analyst.
+
+# Task
+Determine whether the document in the input excerpt below contains a compliance rule or requirement.
+
+# Definitions
+A compliance rule is a statement that prescribes what MUST be done, SHOULD be done, or MUST NOT be done or SHOULD NOT be done. It includes:
+-Statements that describe a commitment or promise to take a specific action in response to a trigger or condition, even if they do not use explicit obligation language, can also be considered compliance rules if they create an expectation of performance.
+-Statements how the action should be performed
+- Obligations (must, shall, required to, have to, will)
+- Prohibitions (must not, shall not, cannot, prohibited, will not)
+- Timeframes/deadlines (within X days, at least every X days)
+- Required actions or procedures
+- Conditions that trigger specific actions
+
+NOT a compliance rule:
+- Scope statements (e.g., "This applies to X only")
+- General descriptions (e.g., "The process involves...")
+- Explanatory text without requirements
+- Background information
+
+# Output Format:
+Respond ONLY with valid JSON:
+{{
+  "reasoning": "One- or two-sentence explanation",
+  "rule_type": "obligation" | "prohibition" | "timeframe" | "procedure" | "conditional" | "none",
+  "contains_compliance_rule": "yes" | "no"
+}}
+
+# Input:
+Document chunk:
+{chunk}
