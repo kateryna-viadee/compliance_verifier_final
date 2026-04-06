@@ -1152,21 +1152,22 @@ def get_regulation_chunks(regulation_id):
 
 @app.route("/api/regulations/upload", methods=["POST"])
 def upload_regulation():
-    """Upload a PDF file, chunk it, and add as a new regulation.
+    """Upload a PDF or DOCX file, chunk it, and add as a new regulation.
 
     Expects multipart form with:
-      - pdf_file: the PDF file
+      - pdf_file: the PDF or DOCX file
       - regulation_name: name for this regulation
     """
     pdf_file = request.files.get("pdf_file")
     regulation_name = request.form.get("regulation_name", "").strip()
 
-    if not pdf_file or not pdf_file.filename.endswith(".pdf"):
-        return jsonify({"error": "A PDF file is required"}), 400
+    ALLOWED_EXTENSIONS = (".pdf", ".docx")
+    if not pdf_file or not pdf_file.filename.lower().endswith(ALLOWED_EXTENSIONS):
+        return jsonify({"error": "A PDF or DOCX file is required"}), 400
     if not regulation_name:
         return jsonify({"error": "regulation_name is required"}), 400
 
-    # Save PDF to uploads folder
+    # Save file to uploads folder
     safe_name = secure_filename(pdf_file.filename)
     timestamp = int(time.time())
     pdf_path = os.path.join(UPLOAD_FOLDER, f"{timestamp}_{safe_name}")
@@ -1181,9 +1182,18 @@ def upload_regulation():
     tmp_chunks = tempfile.mkdtemp(prefix="cv_chunks_")
 
     try:
-        # Copy PDF into source dir (pipeline expects a directory)
-        import shutil
-        shutil.copy2(pdf_path, os.path.join(tmp_source, safe_name))
+        # For DOCX: extract text and save as .md so the pipeline can process it
+        if safe_name.lower().endswith(".docx"):
+            from docx import Document as DocxDocument
+            doc = DocxDocument(pdf_path)
+            text = "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            md_name = os.path.splitext(safe_name)[0] + ".md"
+            with open(os.path.join(tmp_source, md_name), "w", encoding="utf-8") as f:
+                f.write(text)
+        else:
+            # Copy PDF into source dir (pipeline expects a directory)
+            import shutil
+            shutil.copy2(pdf_path, os.path.join(tmp_source, safe_name))
 
         # Run compliance_pipeline.py as subprocess
         if not os.path.exists(COMPLIANCE_PIPELINE_PATH):

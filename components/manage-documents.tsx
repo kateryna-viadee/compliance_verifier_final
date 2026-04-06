@@ -34,7 +34,7 @@ export function ManageDocuments({ onBack }: ManageDocumentsProps) {
     fetcher
   )
 
-  const [uploadMode, setUploadMode] = useState<"pdf" | "text">("pdf")
+  const [uploadMode, setUploadMode] = useState<"file" | "text">("file")
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [pdfFile, setPdfFile] = useState<File | null>(null)
@@ -50,17 +50,18 @@ export function ManageDocuments({ onBack }: ManageDocumentsProps) {
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (file && file.name.endsWith(".pdf")) {
+    const name = file?.name.toLowerCase() ?? ""
+    if (file && (name.endsWith(".pdf") || name.endsWith(".docx"))) {
       setPdfFile(file)
       setUploadError(null)
     } else {
-      alert("Please select a valid PDF file")
+      alert("Please select a valid PDF or Word (.docx) file")
     }
   }
 
   const handleUpload = useCallback(async () => {
     if (!regulationName.trim()) return
-    if (uploadMode === "pdf" && !pdfFile) return
+    if (uploadMode === "file" && !pdfFile) return
     if (uploadMode === "text" && !regulationText.trim()) return
 
     setUploading(true)
@@ -69,7 +70,7 @@ export function ManageDocuments({ onBack }: ManageDocumentsProps) {
     try {
       let res: Response
 
-      if (uploadMode === "pdf") {
+      if (uploadMode === "file") {
         const formData = new FormData()
         formData.append("pdf_file", pdfFile!)
         formData.append("regulation_name", regulationName.trim())
@@ -184,15 +185,15 @@ export function ManageDocuments({ onBack }: ManageDocumentsProps) {
             <div className="flex items-center rounded-md border bg-muted/50 p-0.5">
               <button
                 type="button"
-                onClick={() => setUploadMode("pdf")}
+                onClick={() => setUploadMode("file")}
                 className={`flex items-center gap-1 rounded-sm px-2 py-1 text-xs font-medium transition-colors ${
-                  uploadMode === "pdf"
+                  uploadMode === "file"
                     ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 <FileText className="h-3 w-3" />
-                PDF
+                PDF / Word
               </button>
               <button
                 type="button"
@@ -218,11 +219,11 @@ export function ManageDocuments({ onBack }: ManageDocumentsProps) {
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             />
 
-            {uploadMode === "pdf" ? (
+            {uploadMode === "file" ? (
               <div className="relative">
                 <input
                   type="file"
-                  accept=".pdf"
+                  accept=".pdf,.docx"
                   onChange={handleFileSelect}
                   className="hidden"
                   id="pdf-upload-input"
@@ -234,10 +235,10 @@ export function ManageDocuments({ onBack }: ManageDocumentsProps) {
                   <FileText className="h-5 w-5 text-muted-foreground" />
                   <div className="flex flex-col gap-1">
                     <span className="text-sm font-medium text-foreground">
-                      {pdfFile ? pdfFile.name : "Click to select a PDF file"}
+                      {pdfFile ? pdfFile.name : "Click to select a PDF or Word file"}
                     </span>
                     <span className="text-xs text-muted-foreground">
-                      Only .pdf files are supported
+                      .pdf and .docx files are supported
                     </span>
                   </div>
                 </label>
@@ -261,14 +262,14 @@ export function ManageDocuments({ onBack }: ManageDocumentsProps) {
               disabled={
                 !regulationName.trim() ||
                 uploading ||
-                (uploadMode === "pdf" ? !pdfFile : !regulationText.trim())
+                (uploadMode === "file" ? !pdfFile : !regulationText.trim())
               }
               className="self-end"
             >
               {uploading ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Processing PDF...
+                  Processing...
                 </>
               ) : (
                 <>
@@ -295,7 +296,7 @@ export function ManageDocuments({ onBack }: ManageDocumentsProps) {
             </div>
           ) : !data?.regulations?.length ? (
             <p className="text-sm text-muted-foreground py-4 text-center">
-              No regulation documents found. Upload a PDF to get started.
+              No regulation documents found. Upload a PDF or Word file to get started.
             </p>
           ) : (
             <div className="rounded-md border">
