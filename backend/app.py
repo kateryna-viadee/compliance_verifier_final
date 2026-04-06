@@ -298,18 +298,89 @@ def prefilter_chunks(
 # TEXT CHUNKING — chunk plain text into regulation segments
 # =============================================================
 
+def _semantic_chunk(sentences: list[str], max_chars: int = 3000,
+                    breakpoint_percentile: float = 70) -> list[str]:
+    """
+    Semantic chunking: group sentences by meaning similarity.
+
+    1. Embed each sentence using the global st_model.
+    2. Compute cosine similarity between consecutive sentences.
+    3. Find natural breakpoints where similarity drops (below the
+       percentile threshold of all distances).
+    4. Group sentences between breakpoints into chunks.
+    5. Respect max_chars by forcing a break when a chunk gets too long.
+    """
+    import numpy as np
+    from sklearn.metrics.pairwise import cosine_similarity
+
+    if len(sentences) <= 1:
+        return [" ".join(sentences)] if sentences else []
+
+    # Embed all sentences
+    embeddings = st_model.encode(sentences, show_progress_bar=False)
+
+    # Cosine distance between consecutive sentences
+    distances = []
+    for i in range(len(embeddings) - 1):
+        sim = cosine_similarity([embeddings[i]], [embeddings[i + 1]])[0][0]
+        distances.append(1.0 - sim)  # distance = 1 - similarity
+
+    # Find breakpoints: where distance exceeds the percentile threshold
+    if distances:
+        threshold = float(np.percentile(distances, breakpoint_percentile))
+    else:
+        threshold = 0.5
+
+    # Build chunks by grouping sentences between breakpoints
+    chunks: list[str] = []
+    current_sentences: list[str] = [sentences[0]]
+    current_chars = len(sentences[0])
+
+    for i, dist in enumerate(distances):
+        next_sentence = sentences[i + 1]
+        next_len = len(next_sentence)
+
+        # Break if: semantic boundary detected OR chunk too long
+        if dist >= threshold or (current_chars + next_len > max_chars and current_sentences):
+            chunks.append(" ".join(current_sentences))
+            current_sentences = [next_sentence]
+            current_chars = next_len
+        else:
+            current_sentences.append(next_sentence)
+            current_chars += next_len
+
+    if current_sentences:
+        chunks.append(" ".join(current_sentences))
+
+    return chunks
+
+
 def chunk_plain_text(text: str, max_chars: int = 3000) -> list[dict]:
     """
-    Split plain text into chunks using structural signals (numbered items,
-    headings, article/clause markers) or paragraph breaks as fallback.
+    Split plain text into regulation chunks using a 2-tier strategy:
+
+    Tier 1 — Structural: when the text has clear formatting (numbered items,
+             Article/Section headers, markdown headings, § markers), split
+             on those boundaries.
+
+    Tier 2 — Semantic: when no structural markers are found, use embedding-
+             based similarity to detect topic shifts between sentences and
+             split at natural meaning boundaries.
+
     Returns list of {"chunk_id": ..., "chunk_text": ...}.
     """
     import re as _re
 
+    # ── Tier 1: structural boundary patterns ──
     boundary_patterns = [
         _re.compile(r'^(Article|Clause|Section|Rule|Regulation|Requirement|Obligation)\s+[\dA-Z]', _re.IGNORECASE),
-        _re.compile(r'^\d+(\.\d+)*\.\s'),
+        _re.compile(r'^\d+(\.\d+)*\.\s'),         # "1. " or "1.2. "
+        _re.compile(r'^\d+[\t]'),                  # "7\t" (number + tab)
+        _re.compile(r'^\d+(\.\d+)*[\s]{2,}'),     # "12  " (number + multiple spaces)
+        _re.compile(r'^\d+\s+[A-Z]'),             # "7 All..." (number + space + uppercase)
         _re.compile(r'^[A-Z]\.\s+\S'),
+        _re.compile(r'^(I{1,3}|IV|VI{0,3}|IX|X{1,2})\.\s'),
+        _re.compile(r'^[A-Z][A-Z\s]{8,}$'),
         _re.compile(r'^#{1,4}\s'),
         _re.compile(r'^§\s*\d'),
     ]
@@ -324,8 +395,10 @@ def chunk_plain_text(text: str, max_chars: int = 3000) -> list[dict]:
     has_structure = any(is_boundary(l) for l in lines)
 
     segments: list[str] = []
+    strategy = "structural"
 
     if has_structure:
+        # ── Tier 1: split on structural boundaries ──
         current: list[str] = []
         current_chars = 0
         for line in lines:
@@ -346,38 +419,41 @@ def chunk_plain_text(text: str, max_chars: int = 3000) -> list[dict]:
         if current:
             segments.append("\n".join(current))
     else:
-        # Paragraph-based splitting
-        current: list[str] = []
-        current_chars = 0
+        # ── Tier 2: sentence/newline split → semantic grouping ──
+        # Step 1: break into atomic units (each line, then each sentence)
+        strategy = "semantic"
+        atomic: list[str] = []
         for line in lines:
             stripped = line.strip()
             if not stripped:
-                if current:
-                    segments.append("\n".join(current))
-                    current = []
-                    current_chars = 0
                 continue
-            if current_chars + len(stripped) > max_chars and current:
-                segments.append("\n".join(current))
-                current = [stripped]
-                current_chars = len(stripped)
-            else:
-                current.append(stripped)
-                current_chars += len(stripped)
-        if current:
-            segments.append("\n".join(current))
+            sub = _re.split(r'(?<=[.!?])\s+(?=[A-Z])', stripped)
+            for s in sub:
+                s = s.strip()
+                if s:
+                    atomic.append(s)
 
-    # Merge very short segments
+        # Step 2: group atomic units by semantic similarity
+        if len(atomic) > 1:
+            segments = _semantic_chunk(atomic, max_chars=max_chars)
+        elif atomic:
+            segments = atomic
+        else:
+            segments = [text.strip()] if text.strip() else []
+
+    # Merge very short segments into neighbors
     merged: list[str] = []
     buf = ""
     for seg in segments:
-        if len(buf) + len(seg) > max_chars and buf:
+        if buf and len(buf) + len(seg) > max_chars:
             merged.append(buf.strip())
             buf = seg
         else:
             buf = (buf + "\n\n" + seg).strip()
     if buf:
         merged.append(buf.strip())
+
+    print(f"[Chunker] {len(merged)} chunks from {len(text)} chars (strategy: {strategy})")
 
     return [
         {"chunk_id": str(idx), "chunk_text": seg}
@@ -436,6 +512,7 @@ def run_pipeline_v8(
         llm=llm_v8,
         prompts=PROMPTS_V8,
         strictness=strictness,
+        on_progress=on_progress,
     )
 
     # Build final table from accumulated results
@@ -717,12 +794,9 @@ def analyze():
         process_name = body.get("process_name")
         save_process = body.get("save_process", False)
         regulation_id = body.get("regulation_id")
-        regulation_text = body.get("regulation_text")
-        regulation_name_input = body.get("regulation_name", "")
-        save_regulation = body.get("save_regulation", False)
 
-        if not regulation_id and not regulation_text:
-            return jsonify({"error": "Either regulation_id or regulation_text is required"}), 400
+        if not regulation_id:
+            return jsonify({"error": "regulation_id is required"}), 400
         if not process_id and not process_text:
             return jsonify({"error": "Either process_id, process_text, or BPMN file is required"}), 400
 
@@ -737,41 +811,12 @@ def analyze():
         if new_id not in PROCESSES:
             PROCESSES[new_id] = {"name": process_name, "description": f"User-added: {process_name}", "text": process_text}
 
-    # Resolve regulation: either from saved regulations or from typed text
-    regulation_display_name = ""
-    if regulation_id:
-        selected_regulation = REGULATIONS.get(regulation_id)
-        if not selected_regulation:
-            return jsonify({"error": f"Unknown regulation: {regulation_id}"}), 404
-        all_chunks = selected_regulation["chunks"]
-        regulation_display_name = selected_regulation.get("name", regulation_id)
-    else:
-        # Typed regulation text — chunk it on the fly
-        all_chunks = chunk_plain_text(regulation_text)
-        regulation_display_name = regulation_name_input or "Custom Regulation"
+    selected_regulation = REGULATIONS.get(regulation_id)
+    if not selected_regulation:
+        return jsonify({"error": f"Unknown regulation: {regulation_id}"}), 404
 
-        if not all_chunks:
-            return jsonify({"error": "Could not extract any chunks from the regulation text"}), 400
-
-        # Optionally save for future use
-        if save_regulation and regulation_name_input:
-            new_rows = []
-            for c in all_chunks:
-                new_rows.append({
-                    "chunk_id": c["chunk_id"],
-                    "chunk_text": c["chunk_text"],
-                    "rule_type": "",
-                    "contains_compliance_rule": "",
-                    "document_name": regulation_name_input,
-                })
-            df_new = pd.DataFrame(new_rows)
-            if os.path.exists(REGULATION_CHUNKS_PATH):
-                df_existing = pd.read_excel(REGULATION_CHUNKS_PATH)
-                df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-            else:
-                df_combined = df_new
-            df_combined.to_excel(REGULATION_CHUNKS_PATH, index=False)
-            _reload_regulations()
+    all_chunks = selected_regulation["chunks"]
+    regulation_display_name = selected_regulation.get("name", regulation_id)
 
     process_name_for_id = process_name or (selected_process["name"] if selected_process else "custom")
     clean_process = process_name_for_id.replace(" ", "_").replace("/", "-")
@@ -1212,6 +1257,109 @@ def upload_regulation():
         # Cleanup temp dirs
         import shutil
         shutil.rmtree(tmp_source, ignore_errors=True)
+        shutil.rmtree(tmp_md, ignore_errors=True)
+        shutil.rmtree(tmp_chunks, ignore_errors=True)
+
+
+@app.route("/api/regulations/upload-text", methods=["POST"])
+def upload_regulation_text():
+    """Upload plain text, chunk it via compliance_pipeline.py (Stage 2 only),
+    and add as a new regulation.
+
+    Expects JSON with:
+      - regulation_text: the regulation text
+      - regulation_name: name for this regulation
+    """
+    body = request.get_json(silent=True) or {}
+    regulation_text = body.get("regulation_text", "").strip()
+    regulation_name = body.get("regulation_name", "").strip()
+
+    if not regulation_text:
+        return jsonify({"error": "regulation_text is required"}), 400
+    if not regulation_name:
+        return jsonify({"error": "regulation_name is required"}), 400
+
+    import tempfile
+    import subprocess
+    import shutil
+
+    tmp_md = tempfile.mkdtemp(prefix="cv_md_")
+    tmp_chunks = tempfile.mkdtemp(prefix="cv_chunks_")
+
+    try:
+        # Write text as a .md file (skip Stage 1 — already text)
+        md_path = os.path.join(tmp_md, f"{regulation_name}.md")
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(regulation_text)
+
+        # Run compliance_pipeline.py --chunk-only (Stage 2 only)
+        if not os.path.exists(COMPLIANCE_PIPELINE_PATH):
+            return jsonify({"error": f"compliance_pipeline.py not found at {COMPLIANCE_PIPELINE_PATH}"}), 500
+
+        cmd = [
+            sys.executable,
+            COMPLIANCE_PIPELINE_PATH,
+            "--chunk-only",
+            "--output", tmp_md,
+            "--chunks-dir", tmp_chunks,
+            "--max-segment-chars", "3000",
+        ]
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, encoding="utf-8", env=env)
+
+        if result.returncode != 0:
+            print(f"[Upload-Text] Pipeline stderr: {result.stderr}")
+            return jsonify({"error": f"Pipeline failed: {result.stderr[:500]}"}), 500
+
+        # Read segments.json
+        segments_path = os.path.join(tmp_chunks, "segments.json")
+        if not os.path.exists(segments_path):
+            return jsonify({"error": "Pipeline produced no chunks"}), 500
+
+        with open(segments_path, "r", encoding="utf-8") as f:
+            segments = json.load(f)
+
+        if not segments:
+            return jsonify({"error": "Pipeline produced empty chunks"}), 500
+
+        # Build chunk rows
+        new_rows = []
+        for idx, seg in enumerate(segments, start=1):
+            new_rows.append({
+                "chunk_id": idx,
+                "chunk_text": seg["text"],
+                "rule_type": "",
+                "contains_compliance_rule": "",
+                "document_name": regulation_name,
+            })
+
+        # Append to regulation_chunks.xlsx
+        df_new = pd.DataFrame(new_rows)
+        if os.path.exists(REGULATION_CHUNKS_PATH):
+            df_existing = pd.read_excel(REGULATION_CHUNKS_PATH)
+            df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+        else:
+            df_combined = df_new
+        df_combined.to_excel(REGULATION_CHUNKS_PATH, index=False)
+
+        _reload_regulations()
+
+        doc_id = regulation_name.lower().replace(" ", "-")
+        return jsonify({
+            "success": True,
+            "regulation_id": doc_id,
+            "name": regulation_name,
+            "chunk_count": len(new_rows),
+            "chunks": [{"chunk_id": str(r["chunk_id"]), "chunk_text": r["chunk_text"]} for r in new_rows],
+        })
+
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Pipeline timed out (120s limit)"}), 500
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": f"Upload failed: {str(e)}"}), 500
+    finally:
         shutil.rmtree(tmp_md, ignore_errors=True)
         shutil.rmtree(tmp_chunks, ignore_errors=True)
 

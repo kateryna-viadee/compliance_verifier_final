@@ -14,7 +14,9 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Slider } from "@/components/ui/slider"
-import { FileText, BookOpen, ArrowRight, PenLine, List, FileJson } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import type { AnalysisJob } from "@/lib/types"
+import { FileText, BookOpen, ArrowRight, PenLine, List, FileJson, Loader2, CheckCircle2, XCircle, Trash2, Eye } from "lucide-react"
 
 const fetcher = async (url: string) => {
   const res = await fetch(url)
@@ -28,10 +30,7 @@ export interface AnalyzeParams {
   bpmn_file?: File
   processName?: string
   saveProcess?: boolean
-  regulationId?: string
-  regulationText?: string
-  regulationName?: string
-  saveRegulation?: boolean
+  regulationId: string
   strictness: "conservative" | "pragmatic"
 }
 
@@ -39,9 +38,12 @@ interface DocumentSelectorProps {
   onAnalyze: (params: AnalyzeParams) => void
   onManageDocuments?: () => void
   onHistory?: () => void
+  jobs?: AnalysisJob[]
+  onViewJob?: (job: AnalysisJob) => void
+  onRemoveJob?: (jobId: string) => void
 }
 
-export function DocumentSelector({ onAnalyze, onManageDocuments, onHistory }: DocumentSelectorProps) {
+export function DocumentSelector({ onAnalyze, onManageDocuments, onHistory, jobs, onViewJob, onRemoveJob }: DocumentSelectorProps) {
   const { data, isLoading } = useSWR<OptionsData>("/api/options", fetcher)
   const [processMode, setProcessMode] = useState<"select" | "type" | "bpmn">("select")
   const [processId, setProcessId] = useState<string>("")
@@ -49,53 +51,34 @@ export function DocumentSelector({ onAnalyze, onManageDocuments, onHistory }: Do
   const [bpmn_file, setBpmn_file] = useState<File | null>(null)
   const [processName, setProcessName] = useState<string>("")
   const [saveProcess, setSaveProcess] = useState<boolean>(false)
-  const [regulationMode, setRegulationMode] = useState<"select" | "type">("select")
   const [regulationId, setRegulationId] = useState<string>("")
-  const [regulationText, setRegulationText] = useState<string>("")
-  const [regulationName, setRegulationName] = useState<string>("")
-  const [saveRegulation, setSaveRegulation] = useState<boolean>(false)
   const [strictness, setStrictness] = useState<"conservative" | "pragmatic">("conservative")
 
   const hasProcess =
     processMode === "select" ? processId !== "" :
     processMode === "type" ? processText.trim().length > 0 :
     bpmn_file !== null
-  const hasRegulation =
-    regulationMode === "select" ? regulationId !== "" :
-    regulationText.trim().length > 0
-  const canAnalyze = hasProcess && hasRegulation
-
-  const buildRegulationParams = (): Partial<AnalyzeParams> => {
-    if (regulationMode === "select") {
-      return { regulationId }
-    }
-    return {
-      regulationText: regulationText.trim(),
-      regulationName: regulationName.trim() || undefined,
-      saveRegulation,
-    }
-  }
+  const canAnalyze = hasProcess && regulationId !== ""
 
   const handleSubmit = () => {
-    const regParams = buildRegulationParams()
     if (processMode === "select") {
-      onAnalyze({ processId, strictness, ...regParams } as AnalyzeParams)
+      onAnalyze({ processId, regulationId, strictness })
     } else if (processMode === "type") {
       onAnalyze({
         processText: processText.trim(),
         processName: processName.trim() || undefined,
         saveProcess,
+        regulationId,
         strictness,
-        ...regParams,
-      } as AnalyzeParams)
+      })
     } else if (processMode === "bpmn" && bpmn_file) {
       onAnalyze({
         bpmn_file,
         processName: bpmn_file.name.replace(".bpmn", ""),
         saveProcess,
+        regulationId,
         strictness,
-        ...regParams,
-      } as AnalyzeParams)
+      })
     }
   }
 
@@ -280,93 +263,32 @@ export function DocumentSelector({ onAnalyze, onManageDocuments, onHistory }: Do
                   <BookOpen className="h-4 w-4 text-primary" />
                   Regulation Document
                 </label>
-                <div className="flex items-center gap-3">
-                  {onManageDocuments && (
-                    <button
-                      type="button"
-                      onClick={onManageDocuments}
-                      className="text-xs text-primary hover:underline"
-                    >
-                      Manage Documents
-                    </button>
-                  )}
-                  <div className="flex items-center rounded-md border bg-muted/50 p-0.5">
-                    <button
-                      type="button"
-                      onClick={() => setRegulationMode("select")}
-                      className={`flex items-center gap-1 rounded-sm px-2 py-1 text-xs font-medium transition-colors ${
-                        regulationMode === "select"
-                          ? "bg-background text-foreground shadow-sm"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      <List className="h-3 w-3" />
-                      Select
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setRegulationMode("type")}
-                      className={`flex items-center gap-1 rounded-sm px-2 py-1 text-xs font-medium transition-colors ${
-                        regulationMode === "type"
-                          ? "bg-background text-foreground shadow-sm"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      <PenLine className="h-3 w-3" />
-                      Type
-                    </button>
-                  </div>
-                </div>
+                {onManageDocuments && (
+                  <button
+                    type="button"
+                    onClick={onManageDocuments}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Manage Documents
+                  </button>
+                )}
               </div>
-
-              {regulationMode === "select" ? (
-                <>
-                  <Select value={regulationId} onValueChange={setRegulationId}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select a regulation document..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {data.regulations.map((r) => (
-                        <SelectItem key={r.id} value={r.id}>
-                          <span>{r.name}</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {regulationId && (
-                    <p className="text-xs text-muted-foreground pl-6">
-                      {data.regulations.find((r) => r.id === regulationId)?.description}
-                    </p>
-                  )}
-                </>
-              ) : (
-                <div className="flex flex-col gap-3">
-                  <input
-                    type="text"
-                    value={regulationName}
-                    onChange={(e) => setRegulationName(e.target.value)}
-                    placeholder="Regulation name (e.g. GDPR, ISO 27001)"
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  />
-                  <textarea
-                    value={regulationText}
-                    onChange={(e) => setRegulationText(e.target.value)}
-                    placeholder="Paste or type your regulation text here..."
-                    rows={8}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-y"
-                  />
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <Checkbox
-                      checked={saveRegulation}
-                      onCheckedChange={(checked) =>
-                        setSaveRegulation(checked === true)
-                      }
-                    />
-                    <span className="text-xs text-muted-foreground">
-                      Save this regulation for future use in the dropdown
-                    </span>
-                  </label>
-                </div>
+              <Select value={regulationId} onValueChange={setRegulationId}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select a regulation document..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {data.regulations.map((r) => (
+                    <SelectItem key={r.id} value={r.id}>
+                      <span>{r.name}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {regulationId && (
+                <p className="text-xs text-muted-foreground pl-6">
+                  {data.regulations.find((r) => r.id === regulationId)?.description}
+                </p>
               )}
             </div>
           </div>
@@ -444,6 +366,80 @@ export function DocumentSelector({ onAnalyze, onManageDocuments, onHistory }: Do
             >
               View Past Analyses
             </Button>
+          )}
+
+          {/* ── Active / Recent Analyses ── */}
+          {jobs && jobs.length > 0 && (
+            <div className="flex flex-col gap-3 border-t pt-6">
+              <label className="text-sm font-medium text-foreground">
+                Analyses
+              </label>
+              <div className="flex flex-col gap-2">
+                {jobs.map((job) => (
+                  <div
+                    key={job.id}
+                    className="rounded-md border bg-muted/30 px-3 py-2.5 flex items-center gap-3"
+                  >
+                    {job.status === "running" && (
+                      <Loader2 className="h-4 w-4 text-primary animate-spin shrink-0" />
+                    )}
+                    {job.status === "done" && (
+                      <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+                    )}
+                    {job.status === "error" && (
+                      <XCircle className="h-4 w-4 text-destructive shrink-0" />
+                    )}
+
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">
+                        {job.processName}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {job.regulationName}
+                      </p>
+                      {job.status === "running" && job.step && (
+                        <p className="text-xs text-primary mt-0.5 truncate">
+                          {job.step}
+                        </p>
+                      )}
+                      {job.status === "error" && job.error && (
+                        <p className="text-xs text-destructive mt-0.5 truncate">
+                          {job.error}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      {job.status === "running" && (
+                        <Badge variant="secondary" className="text-xs">
+                          Running
+                        </Badge>
+                      )}
+                      {job.status === "done" && onViewJob && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onViewJob(job)}
+                        >
+                          <Eye className="h-4 w-4 mr-1" />
+                          View
+                        </Button>
+                      )}
+                      {job.status !== "running" && onRemoveJob && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onRemoveJob(job.id)}
+                          className="text-muted-foreground hover:text-destructive"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       </div>

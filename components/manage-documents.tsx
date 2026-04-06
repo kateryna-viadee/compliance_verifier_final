@@ -20,7 +20,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Upload, Trash2, Eye, FileText, ArrowLeft, Loader2 } from "lucide-react"
+import { Upload, Trash2, Eye, FileText, ArrowLeft, Loader2, PenLine } from "lucide-react"
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
 
@@ -34,10 +34,12 @@ export function ManageDocuments({ onBack }: ManageDocumentsProps) {
     fetcher
   )
 
+  const [uploadMode, setUploadMode] = useState<"pdf" | "text">("pdf")
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [regulationName, setRegulationName] = useState("")
+  const [regulationText, setRegulationText] = useState("")
 
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewName, setPreviewName] = useState("")
@@ -57,20 +59,35 @@ export function ManageDocuments({ onBack }: ManageDocumentsProps) {
   }
 
   const handleUpload = useCallback(async () => {
-    if (!pdfFile || !regulationName.trim()) return
+    if (!regulationName.trim()) return
+    if (uploadMode === "pdf" && !pdfFile) return
+    if (uploadMode === "text" && !regulationText.trim()) return
 
     setUploading(true)
     setUploadError(null)
 
     try {
-      const formData = new FormData()
-      formData.append("pdf_file", pdfFile)
-      formData.append("regulation_name", regulationName.trim())
+      let res: Response
 
-      const res = await fetch("/api/regulations", {
-        method: "POST",
-        body: formData,
-      })
+      if (uploadMode === "pdf") {
+        const formData = new FormData()
+        formData.append("pdf_file", pdfFile!)
+        formData.append("regulation_name", regulationName.trim())
+
+        res = await fetch("/api/regulations", {
+          method: "POST",
+          body: formData,
+        })
+      } else {
+        res = await fetch("/api/regulations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            regulation_text: regulationText.trim(),
+            regulation_name: regulationName.trim(),
+          }),
+        })
+      }
 
       const result = await res.json()
 
@@ -82,13 +99,12 @@ export function ManageDocuments({ onBack }: ManageDocumentsProps) {
       // Reset form and refresh list
       setPdfFile(null)
       setRegulationName("")
-      // Reset the file input
+      setRegulationText("")
       const fileInput = document.getElementById(
         "pdf-upload-input"
       ) as HTMLInputElement
       if (fileInput) fileInput.value = ""
 
-      // Refresh regulations list and options (so dropdown updates too)
       mutate("/api/regulations")
       mutate("/api/options")
     } catch (err) {
@@ -98,7 +114,7 @@ export function ManageDocuments({ onBack }: ManageDocumentsProps) {
     } finally {
       setUploading(false)
     }
-  }, [pdfFile, regulationName])
+  }, [pdfFile, regulationName, regulationText, uploadMode])
 
   const handlePreview = useCallback(async (id: string, name: string) => {
     setPreviewName(name)
@@ -160,10 +176,38 @@ export function ManageDocuments({ onBack }: ManageDocumentsProps) {
 
         {/* Upload Section */}
         <div className="rounded-lg border bg-card p-6 flex flex-col gap-4">
-          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-            <Upload className="h-4 w-4 text-primary" />
-            Upload New Regulation
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <Upload className="h-4 w-4 text-primary" />
+              Add New Regulation
+            </h3>
+            <div className="flex items-center rounded-md border bg-muted/50 p-0.5">
+              <button
+                type="button"
+                onClick={() => setUploadMode("pdf")}
+                className={`flex items-center gap-1 rounded-sm px-2 py-1 text-xs font-medium transition-colors ${
+                  uploadMode === "pdf"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <FileText className="h-3 w-3" />
+                PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => setUploadMode("text")}
+                className={`flex items-center gap-1 rounded-sm px-2 py-1 text-xs font-medium transition-colors ${
+                  uploadMode === "text"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <PenLine className="h-3 w-3" />
+                Text
+              </button>
+            </div>
+          </div>
 
           <div className="flex flex-col gap-3">
             <input
@@ -174,29 +218,39 @@ export function ManageDocuments({ onBack }: ManageDocumentsProps) {
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             />
 
-            <div className="relative">
-              <input
-                type="file"
-                accept=".pdf"
-                onChange={handleFileSelect}
-                className="hidden"
-                id="pdf-upload-input"
+            {uploadMode === "pdf" ? (
+              <div className="relative">
+                <input
+                  type="file"
+                  accept=".pdf"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                  id="pdf-upload-input"
+                />
+                <label
+                  htmlFor="pdf-upload-input"
+                  className="flex items-center justify-center gap-2 cursor-pointer rounded-md border-2 border-dashed border-muted-foreground/50 px-3 py-6 text-center transition-colors hover:border-primary hover:bg-muted/50"
+                >
+                  <FileText className="h-5 w-5 text-muted-foreground" />
+                  <div className="flex flex-col gap-1">
+                    <span className="text-sm font-medium text-foreground">
+                      {pdfFile ? pdfFile.name : "Click to select a PDF file"}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      Only .pdf files are supported
+                    </span>
+                  </div>
+                </label>
+              </div>
+            ) : (
+              <textarea
+                value={regulationText}
+                onChange={(e) => setRegulationText(e.target.value)}
+                placeholder="Paste or type your regulation text here..."
+                rows={8}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-y"
               />
-              <label
-                htmlFor="pdf-upload-input"
-                className="flex items-center justify-center gap-2 cursor-pointer rounded-md border-2 border-dashed border-muted-foreground/50 px-3 py-6 text-center transition-colors hover:border-primary hover:bg-muted/50"
-              >
-                <FileText className="h-5 w-5 text-muted-foreground" />
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-foreground">
-                    {pdfFile ? pdfFile.name : "Click to select a PDF file"}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    Only .pdf files are supported
-                  </span>
-                </div>
-              </label>
-            </div>
+            )}
 
             {uploadError && (
               <p className="text-sm text-destructive">{uploadError}</p>
@@ -204,7 +258,11 @@ export function ManageDocuments({ onBack }: ManageDocumentsProps) {
 
             <Button
               onClick={handleUpload}
-              disabled={!pdfFile || !regulationName.trim() || uploading}
+              disabled={
+                !regulationName.trim() ||
+                uploading ||
+                (uploadMode === "pdf" ? !pdfFile : !regulationText.trim())
+              }
               className="self-end"
             >
               {uploading ? (

@@ -751,14 +751,21 @@ def run_dataset(
     llm,
     prompts: Dict[str, str],
     strictness: str = "conservative",
+    on_progress=None,
 ) -> Dict[str, pd.DataFrame]:
     """
     Run the full pipeline (S1 → S4) for one dataset.
     `strictness` controls final_category resolution when S3 runs disagree:
         "conservative" → most severe  (NON-COMPLIANT > NO EVIDENCE > COMPLIANT)
         "pragmatic"    → least severe (COMPLIANT > NO EVIDENCE > NON-COMPLIANT)
+    `on_progress` optional callback(str) for streaming progress to the frontend.
     Returns a dict of DataFrames keyed by step name.
     """
+    def _emit(msg: str):
+        print(f"  {msg}")
+        if on_progress:
+            on_progress(msg)
+
     _n = str(int(time.time() * 1000))
     chunks = [(i + 1, chunk) for i, chunk in enumerate(document)]
 
@@ -768,7 +775,7 @@ def run_dataset(
     print('='*60)
 
     # ── S1 ───────────────────────────────────────────────────────────────────
-    print("  → S1 classify chunks")
+    _emit(f"[S1/4] Classification: processing {len(chunks)} chunks...")
     df_s1, df_s1_subs = step_classify_chunks(
         chunks, llm, prompts["classification"],
         dataset_id=dataset_id,
@@ -777,10 +784,10 @@ def run_dataset(
     df_s1_filtered = df_s1[df_s1["contains_compliance_rule"] != "no"][
         ["dataset_id", "chunk_id", "chunk_text"]
     ].copy()
-    print(f"     {len(df_s1)} total → {len(df_s1_filtered)} compliance rules")
+    _emit(f"[S1/4] Classification: {len(df_s1_filtered)}/{len(df_s1)} contain compliance rules")
 
     if df_s1_filtered.empty:
-        print("     ⚠ No compliance rules found — skipping S2-S4")
+        _emit("[S1/4] No compliance rules found — skipping S2-S4")
         return {
             "s1_winner": df_s1, "s1_subruns": df_s1_subs,
             "s2_winner": pd.DataFrame(), "s2_subruns": pd.DataFrame(),
@@ -789,17 +796,17 @@ def run_dataset(
         }
 
     # ── S2 ───────────────────────────────────────────────────────────────────
-    print("  → S2 relevance (tiebreaker)")
+    _emit(f"[S2/4] Relevance: checking {len(df_s1_filtered)} chunks...")
     df_s2, df_s2_subs = step_relevance_tiebreaker(
         df_s1_filtered, process, llm, prompts["relevance"],
         dataset_id=dataset_id,
         nonce=f"{_n}_s2",
     )
     df_s2_filtered = df_s2[df_s2["s2_relevance"] == "yes"].copy()
-    print(f"     {len(df_s2)} evaluated → {len(df_s2_filtered)} relevant")
+    _emit(f"[S2/4] Relevance: {len(df_s2_filtered)}/{len(df_s2)} relevant to process")
 
     if df_s2_filtered.empty:
-        print("     ⚠ No relevant chunks — skipping S3-S4")
+        _emit("[S2/4] No relevant chunks — skipping S3-S4")
         return {
             "s1_winner": df_s1, "s1_subruns": df_s1_subs,
             "s2_winner": df_s2, "s2_subruns": df_s2_subs,
@@ -808,21 +815,23 @@ def run_dataset(
         }
 
     # ── S3 ───────────────────────────────────────────────────────────────────
-    print(f"  → S3 compliance analysis P3 (dual runs, strictness={strictness})")
+    _emit(f"[S3/4] Compliance Analysis: analyzing {len(df_s2_filtered)} chunks (dual runs, {strictness})...")
     df_s3, df_s3_subs = step_compliance_dual(
         df_s2_filtered, llm, prompts["compliance_p3"],
         strictness=strictness,
         dataset_id=dataset_id,
         nonce=f"{_n}_s3",
     )
+    _emit(f"[S3/4] Compliance Analysis: done")
 
     # ── S4 ───────────────────────────────────────────────────────────────────
-    print("  → S4 ambiguity (single run, ambiguous_field flag)")
+    _emit(f"[S4/4] Ambiguity Analysis: checking {len(df_s3)} chunks...")
     df_s4, df_s4_subs = step_ambiguity_single(
         df_s3, llm, prompts["ambiguity"],
         dataset_id=dataset_id,
         nonce=f"{_n}_s4",
     )
+    _emit(f"[S4/4] Ambiguity Analysis: done")
 
     return {
         "s1_winner":  df_s1,      "s1_subruns":  df_s1_subs,

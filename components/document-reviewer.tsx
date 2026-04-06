@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback } from "react"
-import type { DocumentData, ComplianceSegment } from "@/lib/types"
+import type { DocumentData, ComplianceSegment, AnalysisJob } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { SegmentTable } from "@/components/segment-table"
 import { TextViewer } from "@/components/text-viewer"
@@ -33,7 +33,6 @@ type AppState =
   | { phase: "select" }
   | { phase: "manage-documents" }
   | { phase: "history" }
-  | { phase: "analyzing"; step?: string }
   | { phase: "results"; data: DocumentData }
   | { phase: "error"; message: string }
 
@@ -75,7 +74,7 @@ interface ComplianceVerifierProps {
 }
 
 export function ComplianceVerifier({ initialData, onBackToSelector }: ComplianceVerifierProps) {
-  const [state, setState] = useState<AppState>(() => 
+  const [state, setState] = useState<AppState>(() =>
     initialData ? { phase: "results", data: initialData } : { phase: "select" }
   )
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null)
@@ -85,11 +84,14 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
   const [activeFilterStates, setActiveFilterStates] = useState<Set<string>>(
     () => new Set(["consistent", "assumption", "ambiguous"])
   )
+  const [jobs, setJobs] = useState<AnalysisJob[]>([])
 
-  const handleAnalyze = useCallback(
-    async (params: AnalyzeParams) => {
-      setState({ phase: "analyzing" })
+  const updateJob = useCallback((jobId: string, updates: Partial<AnalysisJob>) => {
+    setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, ...updates } : j)))
+  }, [])
 
+  const runAnalysis = useCallback(
+    async (jobId: string, params: AnalyzeParams) => {
       try {
         let body: string | FormData
         let headers: HeadersInit = {}
@@ -109,9 +111,6 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
             processName: params.processName,
             saveProcess: params.saveProcess,
             regulationId: params.regulationId,
-            regulationText: params.regulationText,
-            regulationName: params.regulationName,
-            saveRegulation: params.saveRegulation,
           })
         }
 
@@ -129,7 +128,6 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
         const contentType = res.headers.get("content-type") || ""
 
         if (contentType.includes("text/event-stream")) {
-          // Parse SSE stream from Flask
           const reader = res.body?.getReader()
           if (!reader) throw new Error("No response body")
 
@@ -150,7 +148,7 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
               try {
                 const event = JSON.parse(line.slice(6))
                 if (event.type === "log") {
-                  setState({ phase: "analyzing", step: event.message })
+                  updateJob(jobId, { step: event.message })
                 } else if (event.type === "error") {
                   throw new Error(event.message)
                 } else if (event.type === "result") {
@@ -168,26 +166,55 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
             throw new Error("Invalid response: missing process, segments, or chunks data")
           }
 
-          setState({ phase: "results", data: resultData })
+          updateJob(jobId, { status: "done", data: resultData, step: undefined })
         } else {
-          // Plain JSON response (fallback)
           const data: DocumentData = await res.json()
-
           if (!data.process || !data.segments || !data.chunks) {
             throw new Error("Invalid response: missing process, segments, or chunks data")
           }
-
-          setState({ phase: "results", data })
+          updateJob(jobId, { status: "done", data, step: undefined })
         }
       } catch (err) {
-        setState({
-          phase: "error",
-          message: err instanceof Error ? err.message : "An unknown error occurred",
+        updateJob(jobId, {
+          status: "error",
+          error: err instanceof Error ? err.message : "An unknown error occurred",
+          step: undefined,
         })
       }
     },
-    []
+    [updateJob]
   )
+
+  const handleAnalyze = useCallback(
+    (params: AnalyzeParams) => {
+      const jobId = `job-${Date.now()}`
+      const pName = params.processName || params.processId || "Custom Process"
+      const rName = params.regulationId || "Custom Regulation"
+
+      const newJob: AnalysisJob = {
+        id: jobId,
+        processName: pName,
+        regulationName: rName,
+        status: "running",
+        startedAt: Date.now(),
+      }
+
+      setJobs((prev) => [newJob, ...prev])
+      // Run in background — don't await
+      runAnalysis(jobId, params)
+    },
+    [runAnalysis]
+  )
+
+  const handleViewJob = useCallback((job: AnalysisJob) => {
+    if (job.data) {
+      setState({ phase: "results", data: job.data })
+    }
+  }, [])
+
+  const handleRemoveJob = useCallback((jobId: string) => {
+    setJobs((prev) => prev.filter((j) => j.id !== jobId))
+  }, [])
 
   const handleBack = useCallback(() => {
     setState({ phase: "select" })
@@ -204,6 +231,9 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
         onAnalyze={handleAnalyze}
         onManageDocuments={() => setState({ phase: "manage-documents" })}
         onHistory={() => setState({ phase: "history" })}
+        jobs={jobs}
+        onViewJob={handleViewJob}
+        onRemoveJob={handleRemoveJob}
       />
     )
   }
@@ -221,11 +251,6 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
         onLoadHistory={(data) => setState({ phase: "results", data })}
       />
     )
-  }
-
-  // --- Analyzing phase ---
-  if (state.phase === "analyzing") {
-    return <AnalysisLoading step={state.step} />
   }
 
   // --- Error phase ---

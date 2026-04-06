@@ -38,16 +38,14 @@ export async function POST(request: Request) {
     } else {
       // Handle JSON body (processId or processText)
       const body = await request.json()
-      const {
-        processId, processText, processName, saveProcess,
-        regulationId, regulationText, regulationName, saveRegulation,
-      } = body
+      const { processId, processText, processName, saveProcess, regulationId } =
+        body
 
-      if ((!processId && !processText) || (!regulationId && !regulationText)) {
+      if ((!processId && !processText) || !regulationId) {
         return NextResponse.json(
           {
             error:
-              "Either processId or processText, plus regulationId or regulationText, are required",
+              "Either processId or processText, plus regulationId, are required",
           },
           { status: 400 }
         )
@@ -62,9 +60,6 @@ export async function POST(request: Request) {
           process_name: processName,
           save_process: saveProcess,
           regulation_id: regulationId,
-          regulation_text: regulationText,
-          regulation_name: regulationName,
-          save_regulation: saveRegulation,
         }),
       })
     }

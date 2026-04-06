@@ -120,6 +120,18 @@ export interface RegulationChunksData {
   chunks: RegulationChunk[]
 }
 
+/** A running or completed analysis job */
+export interface AnalysisJob {
+  id: string
+  processName: string
+  regulationName: string
+  status: "running" | "done" | "error"
+  step?: string
+  data?: DocumentData
+  error?: string
+  startedAt: number
+}
+
 /** Mode for process input */
 export type ProcessMode = "select" | "type" | "bpmn"
 
