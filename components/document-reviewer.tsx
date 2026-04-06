@@ -81,9 +81,6 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
   const [activeCategories, setActiveCategories] = useState<Set<string>>(
     () => new Set(["NON-COMPLIANT"])
   )
-  const [activeFilterStates, setActiveFilterStates] = useState<Set<string>>(
-    () => new Set(["consistent", "assumption", "ambiguous"])
-  )
   const [jobs, setJobs] = useState<AnalysisJob[]>([])
 
   const updateJob = useCallback((jobId: string, updates: Partial<AnalysisJob>) => {
@@ -220,7 +217,6 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
     setState({ phase: "select" })
     setActiveSegmentId(null)
     setActiveCategories(new Set(["NON-COMPLIANT"]))
-    setActiveFilterStates(new Set(["consistent", "assumption", "ambiguous"]))
     onBackToSelector?.()
   }, [onBackToSelector])
 
@@ -284,28 +280,14 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
     return a.process_id - b.process_id
   })
 
-  // Helper: compute filter state for a segment (mirrors segment-table logic)
-  function getSegmentFilterState(s: ComplianceSegment): "consistent" | "assumption" | "ambiguous" {
-      if (s.s3_resolution === "strictness") return "ambiguous"
-    if (s.s4_compliance_category && s.s4_compliance_category !== s.category) return "ambiguous"
-    if (s.s4_assumption_needed === "Yes") return "assumption"
-    return "consistent"
-  }
-
   const filteredSegments = sortedSegments.filter((s) =>
     s.category && s.category !== "nan" &&
-    activeCategories.has(s.category) && activeFilterStates.has(getSegmentFilterState(s))
+    activeCategories.has(s.category)
   )
 
   const categoryCounts: Record<string, number> = {}
   for (const s of sortedSegments) {
     categoryCounts[s.category] = (categoryCounts[s.category] || 0) + 1
-  }
-
-  const filterStateCounts: Record<string, number> = {}
-  for (const s of sortedSegments) {
-    const fs = getSegmentFilterState(s)
-    filterStateCounts[fs] = (filterStateCounts[fs] || 0) + 1
   }
 
   const toggleCategory = (category: string) => {
@@ -317,14 +299,6 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
     })
   }
 
-  const toggleFilterState = (filterState: string) => {
-    setActiveFilterStates((prev) => {
-      const next = new Set(prev)
-      if (next.has(filterState)) next.delete(filterState)
-      else next.add(filterState)
-      return next
-    })
-  }
 
   const handleSegmentClick = (segment: ComplianceSegment) => {
     setActiveSegmentId((prev) => (prev === segment.id ? null : segment.id))
@@ -359,9 +333,6 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
                 activeCategories={activeCategories}
                 onToggleCategory={toggleCategory}
                 categoryCounts={categoryCounts}
-                activeFilterStates={activeFilterStates}
-                onToggleFilterState={toggleFilterState}
-                filterStateCounts={filterStateCounts}
               />
             </div>
           </ResizablePanel>
@@ -407,6 +378,7 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
                         chunks={data.chunks}
                         segments={data.segments}
                         activeSegmentId={activeSegmentId}
+                        ambiguousTerm={activeSegment?.s4_ambiguous_term && activeSegment.s4_ambiguous_term !== "None" ? activeSegment.s4_ambiguous_term : null}
                       />
                     </div>
                   </div>

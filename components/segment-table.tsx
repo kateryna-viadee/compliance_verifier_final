@@ -27,28 +27,15 @@ function getCategoryDotClass(category: string): string {
   }
 }
 
-/** Determine the 3-state filter type for a segment */
+/** Determine the 3-state type for a segment (used for inline icons only) */
 function getFilterState(segment: ComplianceSegment): "consistent" | "assumption" | "ambiguous" {
-
-    if (segment.s3_resolution === "strictness") {
-    return "ambiguous"
-  }
-  // If S4 disagrees with final category, mark as ambiguous
-  if (
-    segment.s4_compliance_category &&
-
-    segment.s4_compliance_category !== segment.category
-  ) {
-    return "ambiguous"
-  }
-    // S4 needed an assumption to reach its conclusion
-  if (segment.s4_assumption_needed === "Yes") {
-    return "assumption"
-  }
+  if (segment.s3_resolution === "strictness") return "ambiguous"
+  if (segment.s4_compliance_category && segment.s4_compliance_category !== segment.category) return "ambiguous"
+  if (segment.s4_assumption_needed === "Yes") return "assumption"
   return "consistent"
 }
 
-/** Render the filter state icon (●, ⚠, or ◐) */
+/** Render the inline icon (⚠ for assumption, nothing otherwise) */
 function FilterIcon({ state }: { state: "consistent" | "assumption" | "ambiguous" }) {
   if (state === "assumption") {
     return (
@@ -61,17 +48,7 @@ function FilterIcon({ state }: { state: "consistent" | "assumption" | "ambiguous
       </span>
     )
   }
-  if (state === "ambiguous") {
-return <span className="block h-2.5 w-2.5" />
-  }
-  // "consistent" — no icon needed
-  return (
-    <span
-      className="block h-2.5 w-2.5"
-      title="Consistent"
-      aria-label="Consistent"
-    />
-  )
+  return null
 }
 
 interface SegmentTableProps {
@@ -81,9 +58,6 @@ interface SegmentTableProps {
   activeCategories: Set<string>
   onToggleCategory: (category: string) => void
   categoryCounts: Record<string, number>
-  activeFilterStates: Set<string>
-  onToggleFilterState: (state: string) => void
-  filterStateCounts: Record<string, number>
 }
 
 export function SegmentTable({
@@ -93,9 +67,6 @@ export function SegmentTable({
   activeCategories,
   onToggleCategory,
   categoryCounts,
-  activeFilterStates,
-  onToggleFilterState,
-  filterStateCounts,
 }: SegmentTableProps) {
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -141,41 +112,6 @@ export function SegmentTable({
             </span>
           </label>
         </div>
-        <div className="flex items-center gap-4 mt-2">
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <Checkbox
-              checked={activeFilterStates.has("consistent")}
-              onCheckedChange={() => onToggleFilterState("consistent")}
-              className="h-3.5 w-3.5 border-slate-400 data-[state=checked]:bg-slate-500 data-[state=checked]:border-slate-500"
-            />
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span className="block h-2 w-2 rounded-full bg-slate-500" />
-              Consistent ({filterStateCounts["consistent"] || 0})
-            </span>
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <Checkbox
-              checked={activeFilterStates.has("assumption")}
-              onCheckedChange={() => onToggleFilterState("assumption")}
-              className="h-3.5 w-3.5 border-orange-400 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
-            />
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span className="text-orange-500 leading-none">⚠</span>
-              Assumption ({filterStateCounts["assumption"] || 0})
-            </span>
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <Checkbox
-              checked={activeFilterStates.has("ambiguous")}
-              onCheckedChange={() => onToggleFilterState("ambiguous")}
-              className="h-3.5 w-3.5 border-slate-400 data-[state=checked]:bg-slate-400 data-[state=checked]:border-slate-400"
-            />
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span className="leading-none text-slate-600">◐</span>
-              Ambiguous ({filterStateCounts["ambiguous"] || 0})
-            </span>
-          </label>
-        </div>
       </div>
       <ScrollArea className="flex-1 min-h-0 thin-scrollbar">
         <Table>
@@ -193,10 +129,13 @@ export function SegmentTable({
             {segments.map((segment) => {
               const isActive = activeSegmentId === segment.id
               const filterState = getFilterState(segment)
-              const isSplitCircle = filterState === "ambiguous" && 
-                segment.s3_category_1 && 
-                segment.s3_category_2 && 
+              const isS3Split = filterState === "ambiguous" &&
+                segment.s3_category_1 &&
+                segment.s3_category_2 &&
                 segment.s3_category_1 !== segment.s3_category_2
+              const isS4Split = !isS3Split &&
+                segment.s4_compliance_category &&
+                segment.s4_compliance_category !== segment.category
 
               return (
                 <TableRow
@@ -229,9 +168,8 @@ export function SegmentTable({
                       {/* Filter State Icon + Category Dot */}
                       <div className="pt-1.5 pr-3 shrink-0 flex flex-col items-center gap-0.5">
                         <FilterIcon state={filterState} />
-                        {isSplitCircle ? (
-                          // Split circle for ambiguous with different categories
-                          <div className="flex h-2.5 w-2.5">
+                        {isS3Split ? (
+                          <div className="flex h-2.5 w-2.5" title="S3 disagreement">
                             <div
                               className={cn(
                                 "w-1/2 rounded-l-full",
@@ -249,8 +187,22 @@ export function SegmentTable({
                               )}
                             />
                           </div>
+                        ) : isS4Split ? (
+                          <div className="flex h-2.5 w-2.5" title="S4 disagrees">
+                            <div
+                              className={cn(
+                                "w-1/2 rounded-l-full",
+                                getCategoryDotClass(segment.category)
+                              )}
+                            />
+                            <div
+                              className={cn(
+                                "w-1/2 rounded-r-full",
+                                getCategoryDotClass(segment.s4_compliance_category ?? "")
+                              )}
+                            />
+                          </div>
                         ) : (
-                          // Regular solid circle
                           <span
                             className={cn(
                               "block h-2.5 w-2.5 rounded-full",

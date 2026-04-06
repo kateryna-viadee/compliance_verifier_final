@@ -6,16 +6,35 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import { BookOpen } from "lucide-react"
 
+/** Split text on a term (case-insensitive) and wrap matches in orange highlight */
+function highlightTerm(text: string, term: string) {
+  if (!term) return text
+  const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi")
+  const parts = text.split(regex)
+  if (parts.length === 1) return text
+  return parts.map((part, i) =>
+    regex.test(part) ? (
+      <span key={i} className="bg-orange-200 text-orange-900 rounded px-0.5">
+        {part}
+      </span>
+    ) : (
+      part
+    )
+  )
+}
+
 interface ChunkViewerProps {
   chunks: RegulationChunk[]
   segments: ComplianceSegment[]
   activeSegmentId: string | null
+  ambiguousTerm?: string | null
 }
 
 export function ChunkViewer({
   chunks,
   segments,
   activeSegmentId,
+  ambiguousTerm,
 }: ChunkViewerProps) {
   const highlightRef = useRef<HTMLSpanElement>(null)
 
@@ -65,7 +84,7 @@ export function ChunkViewer({
                     "bg-highlight/50 text-highlight-foreground rounded-sm ring-2 ring-highlight/60 ring-offset-1 ring-offset-background px-0.5 -mx-0.5"
                 )}
               >
-                {chunk.chunk_text}
+                {ambiguousTerm ? highlightTerm(chunk.chunk_text, ambiguousTerm) : chunk.chunk_text}
                 {i < chunks.length - 1 ? "\n\n" : ""}
               </span>
             )
