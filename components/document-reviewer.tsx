@@ -504,6 +504,9 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
+      <div className="shrink-0 border-t bg-muted/30 px-4 py-1.5 text-center text-xs text-muted-foreground">
+        ❗AI output may contain errors. Your verification is required.
+      </div>
     </div>
   )
 }
