@@ -34,9 +34,10 @@ export interface AnalyzeParams {
 
 interface DocumentSelectorProps {
   onAnalyze: (params: AnalyzeParams) => void
+  onManageDocuments?: () => void
 }
 
-export function DocumentSelector({ onAnalyze }: DocumentSelectorProps) {
+export function DocumentSelector({ onAnalyze, onManageDocuments }: DocumentSelectorProps) {
   const { data, isLoading } = useSWR<OptionsData>("/api/options", fetcher)
   const [processMode, setProcessMode] = useState<"select" | "type" | "bpmn">("select")
   const [processId, setProcessId] = useState<string>("")
@@ -251,10 +252,21 @@ export function DocumentSelector({ onAnalyze }: DocumentSelectorProps) {
 
             {/* ── Regulation section ── */}
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-foreground flex items-center gap-2">
-                <BookOpen className="h-4 w-4 text-primary" />
-                Regulation Document
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-foreground flex items-center gap-2">
+                  <BookOpen className="h-4 w-4 text-primary" />
+                  Regulation Document
+                </label>
+                {onManageDocuments && (
+                  <button
+                    type="button"
+                    onClick={onManageDocuments}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Manage Documents
+                  </button>
+                )}
+              </div>
               <Select value={regulationId} onValueChange={setRegulationId}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select a regulation document..." />

@@ -8,6 +8,7 @@ import { TextViewer } from "@/components/text-viewer"
 import { ChunkViewer } from "@/components/chunk-viewer"
 import { BpmnViewer } from "@/components/bpmn-viewer"
 import { DocumentSelector, type AnalyzeParams } from "@/components/document-selector"
+import { ManageDocuments } from "@/components/manage-documents"
 import { AnalysisLoading } from "@/components/analysis-loading"
 import dynamic from "next/dynamic"
 
@@ -29,6 +30,7 @@ import { ArrowLeft } from "lucide-react"
 
 type AppState =
   | { phase: "select" }
+  | { phase: "manage-documents" }
   | { phase: "analyzing"; step?: string }
   | { phase: "results"; data: DocumentData }
   | { phase: "error"; message: string }
@@ -148,7 +150,17 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
 
   // --- Select phase ---
   if (state.phase === "select") {
-    return <DocumentSelector onAnalyze={handleAnalyze} />
+    return (
+      <DocumentSelector
+        onAnalyze={handleAnalyze}
+        onManageDocuments={() => setState({ phase: "manage-documents" })}
+      />
+    )
+  }
+
+  // --- Manage documents phase ---
+  if (state.phase === "manage-documents") {
+    return <ManageDocuments onBack={() => setState({ phase: "select" })} />
   }
 
   // --- Analyzing phase ---

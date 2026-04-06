@@ -101,6 +101,25 @@ export interface OptionsData {
   regulations: RegulationOption[]
 }
 
+/** A regulation item returned by /api/regulations */
+export interface RegulationItem {
+  id: string
+  name: string
+  description: string
+  chunk_count: number
+}
+
+/** Response from /api/regulations */
+export interface RegulationsListData {
+  regulations: RegulationItem[]
+}
+
+/** Response from /api/regulations/:id/chunks */
+export interface RegulationChunksData {
+  name: string
+  chunks: RegulationChunk[]
+}
+
 /** Mode for process input */
 export type ProcessMode = "select" | "type" | "bpmn"
 

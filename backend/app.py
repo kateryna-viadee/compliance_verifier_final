@@ -778,6 +778,206 @@ def get_history_item(item_id):
         return jsonify({"error": f"Failed to load history file: {str(e)}"}), 500
 
 
+# =============================================================
+# REGULATION MANAGEMENT — upload PDF, list, delete, preview
+# =============================================================
+
+UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+REGULATION_CHUNKS_PATH = os.path.join(os.path.dirname(__file__), "POC", "regulation_chunks.xlsx")
+COMPLIANCE_PIPELINE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "..", "pdf_leser", "compliance_pipeline.py"
+)
+# Fallback: also check on Desktop
+if not os.path.exists(COMPLIANCE_PIPELINE_PATH):
+    COMPLIANCE_PIPELINE_PATH = os.path.expanduser(
+        os.path.join("~", "Desktop", "pdf_leser", "compliance_pipeline.py")
+    )
+
+
+def _reload_regulations():
+    """Reload the REGULATIONS dict from the Excel file."""
+    global REGULATIONS
+    try:
+        df_reg = pd.read_excel(REGULATION_CHUNKS_PATH)
+        new_regs = {}
+        for doc_name in df_reg["document_name"].unique():
+            doc_df = df_reg[df_reg["document_name"] == doc_name]
+            doc_id = doc_name.lower().replace(" ", "-")
+            new_regs[doc_id] = {
+                "name": doc_name,
+                "description": f"Regulation document: {doc_name}",
+                "chunks": [
+                    {"chunk_id": str(row["chunk_id"]), "chunk_text": str(row["chunk_text"])}
+                    for _, row in doc_df.iterrows()
+                ],
+            }
+        REGULATIONS = new_regs
+        print(f"[Regulations] Reloaded {len(REGULATIONS)} regulation(s)")
+    except Exception as e:
+        print(f"[Regulations] Error reloading: {e}")
+
+
+@app.route("/api/regulations", methods=["GET"])
+def list_regulations():
+    """Returns all regulations with metadata (chunk count, source info)."""
+    items = []
+    for rid, r in REGULATIONS.items():
+        items.append({
+            "id": rid,
+            "name": r["name"],
+            "description": r.get("description", ""),
+            "chunk_count": len(r["chunks"]),
+        })
+    return jsonify({"regulations": items})
+
+
+@app.route("/api/regulations/<regulation_id>/chunks", methods=["GET"])
+def get_regulation_chunks(regulation_id):
+    """Returns the chunks for a specific regulation (for preview)."""
+    reg = REGULATIONS.get(regulation_id)
+    if not reg:
+        return jsonify({"error": f"Regulation not found: {regulation_id}"}), 404
+    return jsonify({
+        "name": reg["name"],
+        "chunks": reg["chunks"],
+    })
+
+
+@app.route("/api/regulations/upload", methods=["POST"])
+def upload_regulation():
+    """Upload a PDF file, chunk it, and add as a new regulation.
+
+    Expects multipart form with:
+      - pdf_file: the PDF file
+      - regulation_name: name for this regulation
+    """
+    pdf_file = request.files.get("pdf_file")
+    regulation_name = request.form.get("regulation_name", "").strip()
+
+    if not pdf_file or not pdf_file.filename.endswith(".pdf"):
+        return jsonify({"error": "A PDF file is required"}), 400
+    if not regulation_name:
+        return jsonify({"error": "regulation_name is required"}), 400
+
+    # Save PDF to uploads folder
+    safe_name = secure_filename(pdf_file.filename)
+    timestamp = int(time.time())
+    pdf_path = os.path.join(UPLOAD_FOLDER, f"{timestamp}_{safe_name}")
+    pdf_file.save(pdf_path)
+
+    # Create temp directories for pipeline
+    import tempfile
+    import subprocess
+
+    tmp_source = tempfile.mkdtemp(prefix="cv_src_")
+    tmp_md = tempfile.mkdtemp(prefix="cv_md_")
+    tmp_chunks = tempfile.mkdtemp(prefix="cv_chunks_")
+
+    try:
+        # Copy PDF into source dir (pipeline expects a directory)
+        import shutil
+        shutil.copy2(pdf_path, os.path.join(tmp_source, safe_name))
+
+        # Run compliance_pipeline.py as subprocess
+        if not os.path.exists(COMPLIANCE_PIPELINE_PATH):
+            return jsonify({"error": f"compliance_pipeline.py not found at {COMPLIANCE_PIPELINE_PATH}"}), 500
+
+        cmd = [
+            sys.executable,
+            COMPLIANCE_PIPELINE_PATH,
+            "--source", tmp_source,
+            "--output", tmp_md,
+            "--chunks-dir", tmp_chunks,
+            "--max-segment-chars", "3000",
+        ]
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, encoding="utf-8", env=env)
+
+        if result.returncode != 0:
+            print(f"[Upload] Pipeline stderr: {result.stderr}")
+            return jsonify({"error": f"Pipeline failed: {result.stderr[:500]}"}), 500
+
+        # Read the segments.json output
+        segments_path = os.path.join(tmp_chunks, "segments.json")
+        if not os.path.exists(segments_path):
+            return jsonify({"error": "Pipeline produced no chunks"}), 500
+
+        with open(segments_path, "r", encoding="utf-8") as f:
+            segments = json.load(f)
+
+        if not segments:
+            return jsonify({"error": "Pipeline produced empty chunks"}), 500
+
+        # Build chunk rows for the Excel file
+        new_rows = []
+        for idx, seg in enumerate(segments, start=1):
+            new_rows.append({
+                "chunk_id": idx,
+                "chunk_text": seg["text"],
+                "rule_type": "",
+                "contains_compliance_rule": "",
+                "document_name": regulation_name,
+            })
+
+        # Append to regulation_chunks.xlsx
+        df_new = pd.DataFrame(new_rows)
+        if os.path.exists(REGULATION_CHUNKS_PATH):
+            df_existing = pd.read_excel(REGULATION_CHUNKS_PATH)
+            df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+        else:
+            df_combined = df_new
+        df_combined.to_excel(REGULATION_CHUNKS_PATH, index=False)
+
+        # Reload REGULATIONS dict
+        _reload_regulations()
+
+        doc_id = regulation_name.lower().replace(" ", "-")
+        return jsonify({
+            "success": True,
+            "regulation_id": doc_id,
+            "name": regulation_name,
+            "chunk_count": len(new_rows),
+            "chunks": [{"chunk_id": str(r["chunk_id"]), "chunk_text": r["chunk_text"]} for r in new_rows],
+        })
+
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Pipeline timed out (300s limit)"}), 500
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": f"Upload failed: {str(e)}"}), 500
+    finally:
+        # Cleanup temp dirs
+        import shutil
+        shutil.rmtree(tmp_source, ignore_errors=True)
+        shutil.rmtree(tmp_md, ignore_errors=True)
+        shutil.rmtree(tmp_chunks, ignore_errors=True)
+
+
+@app.route("/api/regulations/<regulation_id>", methods=["DELETE"])
+def delete_regulation(regulation_id):
+    """Delete a regulation by removing its rows from the Excel file."""
+    reg = REGULATIONS.get(regulation_id)
+    if not reg:
+        return jsonify({"error": f"Regulation not found: {regulation_id}"}), 404
+
+    doc_name = reg["name"]
+
+    try:
+        if os.path.exists(REGULATION_CHUNKS_PATH):
+            df = pd.read_excel(REGULATION_CHUNKS_PATH)
+            df = df[df["document_name"] != doc_name]
+            df.to_excel(REGULATION_CHUNKS_PATH, index=False)
+
+        _reload_regulations()
+        return jsonify({"success": True, "deleted": doc_name})
+    except Exception as e:
+        return jsonify({"error": f"Delete failed: {str(e)}"}), 500
+
+
 if __name__ == "__main__":
     print("=" * 50)
     print("Compliance Verifier API running at:")
@@ -786,5 +986,9 @@ if __name__ == "__main__":
     print("  GET  http://localhost:5005/api/document")
     print("  GET  http://localhost:5005/api/history")
     print("  GET  http://localhost:5005/api/history/<filename>")
+    print("  GET  http://localhost:5005/api/regulations")
+    print("  POST http://localhost:5005/api/regulations/upload")
+    print("  GET  http://localhost:5005/api/regulations/<id>/chunks")
+    print("  DEL  http://localhost:5005/api/regulations/<id>")
     print("=" * 50)
-    app.run(host="0.0.0.0", port=5005, debug=False)
+    app.run(host="0.0.0.0", port=5005, debug=True)
