@@ -1,16 +1,13 @@
 import { NextResponse } from "next/server"
-import { MOCK_DATA } from "@/lib/mock-data"
 
 const FLASK_URL = process.env.FLASK_BACKEND_URL || "http://localhost:5005"
 
 export async function POST(request: Request) {
   try {
     const contentType = request.headers.get("content-type")
-    let body: any = {}
+    let flaskResponse: Response
 
-    if (contentType?.includes("application/json")) {
-      body = await request.json()
-    } else if (contentType?.includes("multipart/form-data")) {
+    if (contentType?.includes("multipart/form-data")) {
       // Handle BPMN file upload
       const formData = await request.formData()
       const bpmn_file = formData.get("bpmn_file") as File
@@ -27,56 +24,90 @@ export async function POST(request: Request) {
 
       // Forward to Flask with FormData
       const flaskFormData = new FormData()
-      flaskFormData.append("bpmn_file", bpmn_file)
+      const bytes = await bpmn_file.arrayBuffer()
+      const blob = new Blob([bytes], { type: bpmn_file.type })
+      flaskFormData.append("bpmn_file", blob, bpmn_file.name)
       flaskFormData.append("process_name", processName)
       flaskFormData.append("save_process", String(saveProcess))
       flaskFormData.append("regulation_id", regulationId)
 
-      const response = await fetch(`${FLASK_URL}/api/analyze`, {
+      flaskResponse = await fetch(`${FLASK_URL}/api/analyze`, {
         method: "POST",
         body: flaskFormData,
       })
+    } else {
+      // Handle JSON body (processId or processText)
+      const body = await request.json()
+      const {
+        processId, processText, processName, saveProcess,
+        regulationId, regulationText, regulationName, saveRegulation,
+      } = body
 
-      if (!response.ok) {
-        return NextResponse.json(MOCK_DATA)
+      if ((!processId && !processText) || (!regulationId && !regulationText)) {
+        return NextResponse.json(
+          {
+            error:
+              "Either processId or processText, plus regulationId or regulationText, are required",
+          },
+          { status: 400 }
+        )
       }
 
-      const data = await response.json()
-      return NextResponse.json(data)
-    } else {
-      body = await request.json()
+      flaskResponse = await fetch(`${FLASK_URL}/api/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          process_id: processId,
+          process_text: processText,
+          process_name: processName,
+          save_process: saveProcess,
+          regulation_id: regulationId,
+          regulation_text: regulationText,
+          regulation_name: regulationName,
+          save_regulation: saveRegulation,
+        }),
+      })
     }
 
-    // Handle JSON body (processId or processText)
-    const { processId, processText, processName, saveProcess, regulationId } = body
-
-    if ((!processId && !processText) || !regulationId) {
+    if (!flaskResponse.ok) {
+      const text = await flaskResponse.text()
       return NextResponse.json(
-        { error: "Either processId or processText, plus regulationId, are required" },
-        { status: 400 }
+        { error: `Backend error: ${text.slice(0, 200)}` },
+        { status: flaskResponse.status }
       )
     }
 
-    const response = await fetch(`${FLASK_URL}/api/analyze`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        process_id: processId,
-        process_text: processText,
-        process_name: processName,
-        save_process: saveProcess,
-        regulation_id: regulationId,
-      }),
-    })
-
-    if (!response.ok) {
-      return NextResponse.json(MOCK_DATA)
+    // Flask returns SSE — stream it through to the client
+    if (
+      flaskResponse.headers
+        .get("content-type")
+        ?.includes("text/event-stream")
+    ) {
+      return new Response(flaskResponse.body, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        },
+      })
     }
 
-    const data = await response.json()
-    return NextResponse.json(data)
-  } catch {
-    // Flask is not running -- return mock data so the UI still works
-    return NextResponse.json(MOCK_DATA)
+    // Fallback: plain JSON response
+    const text = await flaskResponse.text()
+    try {
+      const data = JSON.parse(text)
+      return NextResponse.json(data)
+    } catch {
+      return NextResponse.json(
+        { error: "Backend returned invalid response" },
+        { status: 502 }
+      )
+    }
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Analysis failed" },
+      { status: 500 }
+    )
   }
 }

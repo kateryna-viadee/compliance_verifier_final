@@ -182,6 +182,211 @@ for doc_name in _df_reg["document_name"].unique():
     }
 
 # =============================================================
+# PRE-FILTER — embedding-based relevance pre-filter with cache
+# =============================================================
+
+PREFILTER_CACHE_PATH = os.path.join(os.path.dirname(__file__), "POC", "prefilter_cache.xlsx")
+PREFILTER_THRESHOLD = 0.25  # intentionally low to avoid removing relevant chunks too early
+
+
+def _process_hash(process_text: str) -> str:
+    """Stable hash of the process text for cache lookups."""
+    import hashlib
+    return hashlib.sha256(process_text.strip().encode("utf-8")).hexdigest()[:16]
+
+
+def _load_prefilter_cache() -> pd.DataFrame:
+    """Load cached pre-filter results from Excel."""
+    if os.path.exists(PREFILTER_CACHE_PATH):
+        try:
+            return pd.read_excel(PREFILTER_CACHE_PATH)
+        except Exception as e:
+            print(f"[Prefilter] Error loading cache: {e}")
+    return pd.DataFrame(columns=[
+        "process_hash", "regulation_id", "chunk_id",
+        "chunk_text", "similarity_score", "is_relevant",
+    ])
+
+
+def _save_prefilter_cache(df: pd.DataFrame) -> None:
+    """Save pre-filter cache to Excel."""
+    try:
+        df.to_excel(PREFILTER_CACHE_PATH, index=False)
+    except Exception as e:
+        print(f"[Prefilter] Error saving cache: {e}")
+
+
+def prefilter_chunks(
+    process_text: str,
+    regulation_id: str,
+    chunks: list[dict],
+    threshold: float = PREFILTER_THRESHOLD,
+    on_progress=None,
+) -> list[dict]:
+    """
+    Embedding-based pre-filter: keep only chunks whose cosine similarity
+    to any process sentence exceeds `threshold`.
+
+    Results are cached in prefilter_cache.xlsx keyed by (process_hash, regulation_id).
+    """
+    p_hash = _process_hash(process_text)
+    cache_df = _load_prefilter_cache()
+
+    # Check cache
+    cached = cache_df[
+        (cache_df["process_hash"] == p_hash) &
+        (cache_df["regulation_id"] == regulation_id)
+    ]
+    if not cached.empty:
+        relevant_ids = set(
+            cached[cached["is_relevant"] == True]["chunk_id"].astype(str)   # noqa: E712
+        )
+        filtered = [c for c in chunks if str(c["chunk_id"]) in relevant_ids]
+        print(f"[Prefilter] Cache hit: {len(filtered)}/{len(chunks)} chunks for {regulation_id}")
+        if on_progress:
+            on_progress(f"Pre-filter (cached): {len(filtered)}/{len(chunks)} chunks relevant")
+        return filtered
+
+    # Compute embeddings
+    if on_progress:
+        on_progress("Pre-filter: computing embeddings...")
+    print(f"[Prefilter] Computing embeddings for {len(chunks)} chunks...")
+
+    # Split process into sentences for finer-grained matching
+    process_sentences = [s.strip() for s in re.split(r'[.;]\s+', process_text) if len(s.strip()) > 20]
+    if not process_sentences:
+        process_sentences = [process_text]
+
+    process_embeddings = st_model.encode(process_sentences, show_progress_bar=False)
+    chunk_texts = [c["chunk_text"] for c in chunks]
+    chunk_embeddings = st_model.encode(chunk_texts, show_progress_bar=False)
+
+    # Cosine similarity: each chunk vs all process sentences, take max
+    from sklearn.metrics.pairwise import cosine_similarity
+    sim_matrix = cosine_similarity(chunk_embeddings, process_embeddings)  # (n_chunks, n_sentences)
+    max_scores = sim_matrix.max(axis=1)  # best match per chunk
+
+    # Build cache rows and filter
+    cache_rows = []
+    filtered = []
+    for i, chunk in enumerate(chunks):
+        score = float(max_scores[i])
+        relevant = score >= threshold
+        cache_rows.append({
+            "process_hash": p_hash,
+            "regulation_id": regulation_id,
+            "chunk_id": str(chunk["chunk_id"]),
+            "chunk_text": chunk["chunk_text"][:200],  # truncate for readability
+            "similarity_score": round(score, 4),
+            "is_relevant": relevant,
+        })
+        if relevant:
+            filtered.append(chunk)
+
+    # Append to cache
+    new_cache_df = pd.DataFrame(cache_rows)
+    combined = pd.concat([cache_df, new_cache_df], ignore_index=True)
+    _save_prefilter_cache(combined)
+
+    print(f"[Prefilter] {len(filtered)}/{len(chunks)} chunks above threshold {threshold}")
+    if on_progress:
+        on_progress(f"Pre-filter: {len(filtered)}/{len(chunks)} chunks relevant (threshold={threshold})")
+    return filtered
+
+
+# =============================================================
+# TEXT CHUNKING — chunk plain text into regulation segments
+# =============================================================
+
+def chunk_plain_text(text: str, max_chars: int = 3000) -> list[dict]:
+    """
+    Split plain text into chunks using structural signals (numbered items,
+    headings, article/clause markers) or paragraph breaks as fallback.
+    Returns list of {"chunk_id": ..., "chunk_text": ...}.
+    """
+    import re as _re
+
+    boundary_patterns = [
+        _re.compile(r'^(Article|Clause|Section|Rule|Regulation|Requirement|Obligation)\s+[\dA-Z]', _re.IGNORECASE),
+        _re.compile(r'^\d+(\.\d+)*\.\s'),
+        _re.compile(r'^[A-Z]\.\s+\S'),
+        _re.compile(r'^#{1,4}\s'),
+        _re.compile(r'^§\s*\d'),
+    ]
+
+    def is_boundary(line: str) -> bool:
+        s = line.strip()
+        if not s:
+            return False
+        return any(p.match(s) for p in boundary_patterns)
+
+    lines = text.splitlines()
+    has_structure = any(is_boundary(l) for l in lines)
+
+    segments: list[str] = []
+
+    if has_structure:
+        current: list[str] = []
+        current_chars = 0
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if is_boundary(stripped) and current:
+                segments.append("\n".join(current))
+                current = [stripped]
+                current_chars = len(stripped)
+            elif current_chars + len(stripped) > max_chars and current:
+                segments.append("\n".join(current))
+                current = [stripped]
+                current_chars = len(stripped)
+            else:
+                current.append(stripped)
+                current_chars += len(stripped)
+        if current:
+            segments.append("\n".join(current))
+    else:
+        # Paragraph-based splitting
+        current: list[str] = []
+        current_chars = 0
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                if current:
+                    segments.append("\n".join(current))
+                    current = []
+                    current_chars = 0
+                continue
+            if current_chars + len(stripped) > max_chars and current:
+                segments.append("\n".join(current))
+                current = [stripped]
+                current_chars = len(stripped)
+            else:
+                current.append(stripped)
+                current_chars += len(stripped)
+        if current:
+            segments.append("\n".join(current))
+
+    # Merge very short segments
+    merged: list[str] = []
+    buf = ""
+    for seg in segments:
+        if len(buf) + len(seg) > max_chars and buf:
+            merged.append(buf.strip())
+            buf = seg
+        else:
+            buf = (buf + "\n\n" + seg).strip()
+    if buf:
+        merged.append(buf.strip())
+
+    return [
+        {"chunk_id": str(idx), "chunk_text": seg}
+        for idx, seg in enumerate(merged, start=1)
+        if seg.strip()
+    ]
+
+
+# =============================================================
 # PIPELINE V8 — runs the full compliance analysis pipeline
 # =============================================================
 
@@ -193,6 +398,8 @@ def run_pipeline_v8(
     strictness: str = "conservative",
     bpmn_xml: str = None,
     on_progress=None,
+    process_name: str = "",
+    regulation_name: str = "",
 ) -> pd.DataFrame:
     """
     Runs the full v8 compliance analysis pipeline.
@@ -229,7 +436,6 @@ def run_pipeline_v8(
         llm=llm_v8,
         prompts=PROMPTS_V8,
         strictness=strictness,
-        on_progress=on_progress,
     )
 
     # Build final table from accumulated results
@@ -317,6 +523,10 @@ def run_pipeline_v8(
         return str(row.get("s3_reasoning_2", ""))
 
     df_final["compliance_report"] = df_final.apply(_get_winning_reasoning, axis=1)
+
+    # Add metadata columns for history
+    df_final["process_name"] = process_name
+    df_final["regulation_name"] = regulation_name
 
     # Save output Excel for history (after compliance_report is computed)
     output_path = os.path.join(HISTORY_FOLDER, f"{dataset_id}_{int(time.time())}.xlsx")
@@ -507,9 +717,12 @@ def analyze():
         process_name = body.get("process_name")
         save_process = body.get("save_process", False)
         regulation_id = body.get("regulation_id")
+        regulation_text = body.get("regulation_text")
+        regulation_name_input = body.get("regulation_name", "")
+        save_regulation = body.get("save_regulation", False)
 
-        if not regulation_id:
-            return jsonify({"error": "regulation_id is required"}), 400
+        if not regulation_id and not regulation_text:
+            return jsonify({"error": "Either regulation_id or regulation_text is required"}), 400
         if not process_id and not process_text:
             return jsonify({"error": "Either process_id, process_text, or BPMN file is required"}), 400
 
@@ -524,15 +737,45 @@ def analyze():
         if new_id not in PROCESSES:
             PROCESSES[new_id] = {"name": process_name, "description": f"User-added: {process_name}", "text": process_text}
 
-    selected_regulation = REGULATIONS.get(regulation_id)
-    if not selected_regulation:
-        return jsonify({"error": f"Unknown regulation: {regulation_id}"}), 404
+    # Resolve regulation: either from saved regulations or from typed text
+    regulation_display_name = ""
+    if regulation_id:
+        selected_regulation = REGULATIONS.get(regulation_id)
+        if not selected_regulation:
+            return jsonify({"error": f"Unknown regulation: {regulation_id}"}), 404
+        all_chunks = selected_regulation["chunks"]
+        regulation_display_name = selected_regulation.get("name", regulation_id)
+    else:
+        # Typed regulation text — chunk it on the fly
+        all_chunks = chunk_plain_text(regulation_text)
+        regulation_display_name = regulation_name_input or "Custom Regulation"
 
-    document = selected_regulation["chunks"]
+        if not all_chunks:
+            return jsonify({"error": "Could not extract any chunks from the regulation text"}), 400
+
+        # Optionally save for future use
+        if save_regulation and regulation_name_input:
+            new_rows = []
+            for c in all_chunks:
+                new_rows.append({
+                    "chunk_id": c["chunk_id"],
+                    "chunk_text": c["chunk_text"],
+                    "rule_type": "",
+                    "contains_compliance_rule": "",
+                    "document_name": regulation_name_input,
+                })
+            df_new = pd.DataFrame(new_rows)
+            if os.path.exists(REGULATION_CHUNKS_PATH):
+                df_existing = pd.read_excel(REGULATION_CHUNKS_PATH)
+                df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+            else:
+                df_combined = df_new
+            df_combined.to_excel(REGULATION_CHUNKS_PATH, index=False)
+            _reload_regulations()
 
     process_name_for_id = process_name or (selected_process["name"] if selected_process else "custom")
     clean_process = process_name_for_id.replace(" ", "_").replace("/", "-")
-    clean_regulation = selected_regulation.get("name", regulation_id).replace(" ", "_").replace("/", "-")
+    clean_regulation = regulation_display_name.replace(" ", "_").replace("/", "-")
     dataset_id = f"{clean_process}_{clean_regulation}"
 
     # ── Stream SSE ──
@@ -543,6 +786,18 @@ def analyze():
 
         def worker():
             try:
+                # Pre-filter chunks using embeddings (cached)
+                prefilter_reg_id = regulation_id or clean_regulation
+                document = prefilter_chunks(
+                    process_text=process_text,
+                    regulation_id=prefilter_reg_id,
+                    chunks=all_chunks,
+                    on_progress=lambda msg: progress_q.put(msg),
+                )
+                if not document:
+                    progress_q.put("Pre-filter removed all chunks — running with full set")
+                    document = all_chunks
+
                 result_box[0] = run_pipeline_v8(
                     process_text=process_text,
                     document=document,
@@ -550,6 +805,8 @@ def analyze():
                     strictness="conservative",
                     bpmn_xml=bpmn_xml,
                     on_progress=lambda msg: progress_q.put(msg),
+                    process_name=process_name_for_id,
+                    regulation_name=regulation_display_name,
                 )
             except Exception as e:
                 import traceback; traceback.print_exc()
@@ -571,7 +828,7 @@ def analyze():
 
         df_result = result_box[0]
         segments = [] if df_result is None or df_result.empty else build_segments(df_result)
-        payload = {"process": process_text, "segments": segments, "chunks": build_chunks(document), "bpmnXml": bpmn_xml}
+        payload = {"process": process_text, "segments": segments, "chunks": build_chunks(all_chunks), "bpmnXml": bpmn_xml}
         yield f"data: {json.dumps({'type': 'result', 'data': payload})}\n\n"
 
     return Response(
@@ -731,8 +988,10 @@ def get_history_item(item_id):
     dataset_id = parts[1] if len(parts) > 1 else None
     run_id = parts[2] if len(parts) > 2 else None
     
-    # Secure the filename to prevent directory traversal
-    safe_filename = secure_filename(filename)
+    # Prevent directory traversal without stripping special chars like #
+    safe_filename = os.path.basename(filename)
+    if safe_filename != filename or ".." in filename:
+        return jsonify({"error": "Invalid filename"}), 400
     filepath = os.path.join(HISTORY_FOLDER, safe_filename)
     
     if not os.path.exists(filepath):

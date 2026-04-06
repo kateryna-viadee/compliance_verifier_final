@@ -28,16 +28,20 @@ export interface AnalyzeParams {
   bpmn_file?: File
   processName?: string
   saveProcess?: boolean
-  regulationId: string
+  regulationId?: string
+  regulationText?: string
+  regulationName?: string
+  saveRegulation?: boolean
   strictness: "conservative" | "pragmatic"
 }
 
 interface DocumentSelectorProps {
   onAnalyze: (params: AnalyzeParams) => void
   onManageDocuments?: () => void
+  onHistory?: () => void
 }
 
-export function DocumentSelector({ onAnalyze, onManageDocuments }: DocumentSelectorProps) {
+export function DocumentSelector({ onAnalyze, onManageDocuments, onHistory }: DocumentSelectorProps) {
   const { data, isLoading } = useSWR<OptionsData>("/api/options", fetcher)
   const [processMode, setProcessMode] = useState<"select" | "type" | "bpmn">("select")
   const [processId, setProcessId] = useState<string>("")
@@ -45,34 +49,53 @@ export function DocumentSelector({ onAnalyze, onManageDocuments }: DocumentSelec
   const [bpmn_file, setBpmn_file] = useState<File | null>(null)
   const [processName, setProcessName] = useState<string>("")
   const [saveProcess, setSaveProcess] = useState<boolean>(false)
+  const [regulationMode, setRegulationMode] = useState<"select" | "type">("select")
   const [regulationId, setRegulationId] = useState<string>("")
+  const [regulationText, setRegulationText] = useState<string>("")
+  const [regulationName, setRegulationName] = useState<string>("")
+  const [saveRegulation, setSaveRegulation] = useState<boolean>(false)
   const [strictness, setStrictness] = useState<"conservative" | "pragmatic">("conservative")
 
   const hasProcess =
     processMode === "select" ? processId !== "" :
     processMode === "type" ? processText.trim().length > 0 :
     bpmn_file !== null
-  const canAnalyze = hasProcess && regulationId !== ""
+  const hasRegulation =
+    regulationMode === "select" ? regulationId !== "" :
+    regulationText.trim().length > 0
+  const canAnalyze = hasProcess && hasRegulation
+
+  const buildRegulationParams = (): Partial<AnalyzeParams> => {
+    if (regulationMode === "select") {
+      return { regulationId }
+    }
+    return {
+      regulationText: regulationText.trim(),
+      regulationName: regulationName.trim() || undefined,
+      saveRegulation,
+    }
+  }
 
   const handleSubmit = () => {
+    const regParams = buildRegulationParams()
     if (processMode === "select") {
-      onAnalyze({ processId, regulationId, strictness })
+      onAnalyze({ processId, strictness, ...regParams } as AnalyzeParams)
     } else if (processMode === "type") {
       onAnalyze({
         processText: processText.trim(),
         processName: processName.trim() || undefined,
         saveProcess,
-        regulationId,
         strictness,
-      })
+        ...regParams,
+      } as AnalyzeParams)
     } else if (processMode === "bpmn" && bpmn_file) {
       onAnalyze({
         bpmn_file,
         processName: bpmn_file.name.replace(".bpmn", ""),
         saveProcess,
-        regulationId,
         strictness,
-      })
+        ...regParams,
+      } as AnalyzeParams)
     }
   }
 
@@ -257,32 +280,93 @@ export function DocumentSelector({ onAnalyze, onManageDocuments }: DocumentSelec
                   <BookOpen className="h-4 w-4 text-primary" />
                   Regulation Document
                 </label>
-                {onManageDocuments && (
-                  <button
-                    type="button"
-                    onClick={onManageDocuments}
-                    className="text-xs text-primary hover:underline"
-                  >
-                    Manage Documents
-                  </button>
-                )}
+                <div className="flex items-center gap-3">
+                  {onManageDocuments && (
+                    <button
+                      type="button"
+                      onClick={onManageDocuments}
+                      className="text-xs text-primary hover:underline"
+                    >
+                      Manage Documents
+                    </button>
+                  )}
+                  <div className="flex items-center rounded-md border bg-muted/50 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setRegulationMode("select")}
+                      className={`flex items-center gap-1 rounded-sm px-2 py-1 text-xs font-medium transition-colors ${
+                        regulationMode === "select"
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <List className="h-3 w-3" />
+                      Select
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRegulationMode("type")}
+                      className={`flex items-center gap-1 rounded-sm px-2 py-1 text-xs font-medium transition-colors ${
+                        regulationMode === "type"
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <PenLine className="h-3 w-3" />
+                      Type
+                    </button>
+                  </div>
+                </div>
               </div>
-              <Select value={regulationId} onValueChange={setRegulationId}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select a regulation document..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {data.regulations.map((r) => (
-                    <SelectItem key={r.id} value={r.id}>
-                      <span>{r.name}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {regulationId && (
-                <p className="text-xs text-muted-foreground pl-6">
-                  {data.regulations.find((r) => r.id === regulationId)?.description}
-                </p>
+
+              {regulationMode === "select" ? (
+                <>
+                  <Select value={regulationId} onValueChange={setRegulationId}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select a regulation document..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {data.regulations.map((r) => (
+                        <SelectItem key={r.id} value={r.id}>
+                          <span>{r.name}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {regulationId && (
+                    <p className="text-xs text-muted-foreground pl-6">
+                      {data.regulations.find((r) => r.id === regulationId)?.description}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <input
+                    type="text"
+                    value={regulationName}
+                    onChange={(e) => setRegulationName(e.target.value)}
+                    placeholder="Regulation name (e.g. GDPR, ISO 27001)"
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  />
+                  <textarea
+                    value={regulationText}
+                    onChange={(e) => setRegulationText(e.target.value)}
+                    placeholder="Paste or type your regulation text here..."
+                    rows={8}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-y"
+                  />
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <Checkbox
+                      checked={saveRegulation}
+                      onCheckedChange={(checked) =>
+                        setSaveRegulation(checked === true)
+                      }
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      Save this regulation for future use in the dropdown
+                    </span>
+                  </label>
+                </div>
               )}
             </div>
           </div>
@@ -350,6 +434,17 @@ export function DocumentSelector({ onAnalyze, onManageDocuments }: DocumentSelec
             Analyze Compliance
             <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
+
+          {onHistory && (
+            <Button
+              variant="outline"
+              className="w-full"
+              size="lg"
+              onClick={onHistory}
+            >
+              View Past Analyses
+            </Button>
+          )}
         </div>
       </div>
     </div>

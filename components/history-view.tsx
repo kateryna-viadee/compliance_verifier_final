@@ -7,19 +7,18 @@ import type { HistoryItem, DocumentData } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
-import { FileText, Calendar, ArrowRight, RefreshCw } from "lucide-react"
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5005"
+import { FileText, Calendar, ArrowRight, ArrowLeft, RefreshCw } from "lucide-react"
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
 interface HistoryViewProps {
   onLoadHistory: (data: DocumentData) => void
+  onBack: () => void
 }
 
-export function HistoryView({ onLoadHistory }: HistoryViewProps) {
+export function HistoryView({ onLoadHistory, onBack }: HistoryViewProps) {
   const { data, isLoading, error, mutate } = useSWR<{ items: HistoryItem[] }>(
-    `${API_BASE}/api/history`,
+    "/api/history",
     fetcher
   )
   const [loadingId, setLoadingId] = useState<string | null>(null)
@@ -28,7 +27,7 @@ export function HistoryView({ onLoadHistory }: HistoryViewProps) {
     setLoadingId(item.id)
     try {
       // Use the full item.id which contains filename|dataset_id|run_id
-      const res = await fetch(`${API_BASE}/api/history/${encodeURIComponent(item.id)}`)
+      const res = await fetch(`/api/history/${encodeURIComponent(item.id)}`)
       if (!res.ok) {
         throw new Error(`Failed to load history: ${res.statusText}`)
       }
@@ -91,11 +90,17 @@ export function HistoryView({ onLoadHistory }: HistoryViewProps) {
     <div className="h-full flex flex-col">
       <div className="px-6 py-4 border-b bg-muted/30">
         <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Analysis History</h2>
-            <p className="text-xs text-muted-foreground">
-              {items.length} past {items.length === 1 ? "analysis" : "analyses"} available
-            </p>
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={onBack}>
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Back
+            </Button>
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">Analysis History</h2>
+              <p className="text-xs text-muted-foreground">
+                {items.length} past {items.length === 1 ? "analysis" : "analyses"} available
+              </p>
+            </div>
           </div>
           <Button variant="ghost" size="sm" onClick={() => mutate()}>
             <RefreshCw className="h-4 w-4" />

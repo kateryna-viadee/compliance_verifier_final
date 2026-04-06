@@ -9,6 +9,7 @@ import { ChunkViewer } from "@/components/chunk-viewer"
 import { BpmnViewer } from "@/components/bpmn-viewer"
 import { DocumentSelector, type AnalyzeParams } from "@/components/document-selector"
 import { ManageDocuments } from "@/components/manage-documents"
+import { HistoryView } from "@/components/history-view"
 import { AnalysisLoading } from "@/components/analysis-loading"
 import dynamic from "next/dynamic"
 
@@ -31,6 +32,7 @@ import { ArrowLeft } from "lucide-react"
 type AppState =
   | { phase: "select" }
   | { phase: "manage-documents" }
+  | { phase: "history" }
   | { phase: "analyzing"; step?: string }
   | { phase: "results"; data: DocumentData }
   | { phase: "error"; message: string }
@@ -93,15 +95,13 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
         let headers: HeadersInit = {}
 
         if (params.bpmn_file) {
-          // BPMN file upload — use FormData
           const formData = new FormData()
           formData.append("bpmn_file", params.bpmn_file)
           formData.append("processName", params.processName || "")
           formData.append("saveProcess", String(params.saveProcess || false))
-          formData.append("regulationId", params.regulationId)
+          formData.append("regulationId", params.regulationId || "")
           body = formData
         } else {
-          // Regular JSON body for text or processId
           headers["Content-Type"] = "application/json"
           body = JSON.stringify({
             processId: params.processId,
@@ -109,6 +109,9 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
             processName: params.processName,
             saveProcess: params.saveProcess,
             regulationId: params.regulationId,
+            regulationText: params.regulationText,
+            regulationName: params.regulationName,
+            saveRegulation: params.saveRegulation,
           })
         }
 
@@ -123,13 +126,59 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
           throw new Error(info.error || `Request failed with status ${res.status}`)
         }
 
-        const data: DocumentData = await res.json()
+        const contentType = res.headers.get("content-type") || ""
 
-        if (!data.process || !data.segments || !data.chunks) {
-          throw new Error("Invalid response: missing process, segments, or chunks data")
+        if (contentType.includes("text/event-stream")) {
+          // Parse SSE stream from Flask
+          const reader = res.body?.getReader()
+          if (!reader) throw new Error("No response body")
+
+          const decoder = new TextDecoder()
+          let buffer = ""
+          let resultData: DocumentData | null = null
+
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split("\n")
+            buffer = lines.pop() || ""
+
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue
+              try {
+                const event = JSON.parse(line.slice(6))
+                if (event.type === "log") {
+                  setState({ phase: "analyzing", step: event.message })
+                } else if (event.type === "error") {
+                  throw new Error(event.message)
+                } else if (event.type === "result") {
+                  resultData = event.data
+                }
+              } catch (e) {
+                if (e instanceof Error && e.message !== "Unexpected end of JSON input") {
+                  throw e
+                }
+              }
+            }
+          }
+
+          if (!resultData || !resultData.process || !resultData.segments || !resultData.chunks) {
+            throw new Error("Invalid response: missing process, segments, or chunks data")
+          }
+
+          setState({ phase: "results", data: resultData })
+        } else {
+          // Plain JSON response (fallback)
+          const data: DocumentData = await res.json()
+
+          if (!data.process || !data.segments || !data.chunks) {
+            throw new Error("Invalid response: missing process, segments, or chunks data")
+          }
+
+          setState({ phase: "results", data })
         }
-
-        setState({ phase: "results", data })
       } catch (err) {
         setState({
           phase: "error",
@@ -154,6 +203,7 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
       <DocumentSelector
         onAnalyze={handleAnalyze}
         onManageDocuments={() => setState({ phase: "manage-documents" })}
+        onHistory={() => setState({ phase: "history" })}
       />
     )
   }
@@ -161,6 +211,16 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
   // --- Manage documents phase ---
   if (state.phase === "manage-documents") {
     return <ManageDocuments onBack={() => setState({ phase: "select" })} />
+  }
+
+  // --- History phase ---
+  if (state.phase === "history") {
+    return (
+      <HistoryView
+        onBack={() => setState({ phase: "select" })}
+        onLoadHistory={(data) => setState({ phase: "results", data })}
+      />
+    )
   }
 
   // --- Analyzing phase ---
