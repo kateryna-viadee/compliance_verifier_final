@@ -47,7 +47,7 @@ from tqdm import tqdm
 from langchain_openai import AzureChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
-MAX_WORKERS = 2
+MAX_WORKERS = 4
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SEVERITY / STRICTNESS
@@ -746,7 +746,7 @@ def step_ambiguity_single(
 
 def run_dataset(
     dataset_id: str,
-    document: List[str],
+    document: List,
     process: str,
     llm,
     prompts: Dict[str, str],
@@ -767,7 +767,11 @@ def run_dataset(
             on_progress(msg)
 
     _n = str(int(time.time() * 1000))
-    chunks = [(i + 1, chunk) for i, chunk in enumerate(document)]
+    # Accept either (id, text) tuples or plain strings
+    if document and isinstance(document[0], (list, tuple)):
+        chunks = [(cid, ctext) for cid, ctext in document]
+    else:
+        chunks = [(i + 1, chunk) for i, chunk in enumerate(document)]
 
     print(f"\n{'='*60}")
     print(f"  Dataset   : {dataset_id}  |  chunks: {len(chunks)}")

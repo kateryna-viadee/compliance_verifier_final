@@ -69,6 +69,34 @@ CORS(app)
 HISTORY_FOLDER = os.path.join(os.path.dirname(__file__), "history")
 os.makedirs(HISTORY_FOLDER, exist_ok=True)
 
+# ── Saved processes file path ──
+SAVED_PROCESSES_PATH = os.path.join(os.path.dirname(__file__), "saved_processes.json")
+
+def _load_saved_processes():
+    """Load user-saved processes from disk and merge into PROCESSES dict."""
+    if os.path.exists(SAVED_PROCESSES_PATH):
+        try:
+            with open(SAVED_PROCESSES_PATH, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            for pid, pdata in saved.items():
+                if pid not in PROCESSES:
+                    PROCESSES[pid] = pdata
+        except Exception as e:
+            print(f"[Processes] Error loading saved_processes.json: {e}")
+
+def _save_process_to_disk(process_id: str, process_data: dict):
+    """Persist a user-added process to saved_processes.json."""
+    saved = {}
+    if os.path.exists(SAVED_PROCESSES_PATH):
+        try:
+            with open(SAVED_PROCESSES_PATH, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+        except Exception:
+            pass
+    saved[process_id] = process_data
+    with open(SAVED_PROCESSES_PATH, "w", encoding="utf-8") as f:
+        json.dump(saved, f, ensure_ascii=False, indent=2)
+
 # ── Sentence-transformer model (loaded once at startup) ──
 st_model = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -125,6 +153,9 @@ Following successful completion of all prior steps, the merchant account is acti
 """,
     },
 }
+
+# Load any user-saved processes from disk
+_load_saved_processes()
 
 
 REGULATIONS = {
@@ -299,7 +330,7 @@ def prefilter_chunks(
 # =============================================================
 
 def _semantic_chunk(sentences: list[str], max_chars: int = 3000,
-                    breakpoint_percentile: float = 70) -> list[str]:
+                    breakpoint_percentile: float = 50) -> list[str]:
     """
     Semantic chunking: group sentences by meaning similarity.
 
@@ -501,13 +532,13 @@ def run_pipeline_v8(
         if on_progress:
             on_progress(msg)
 
-    # Convert document to list of chunk texts
-    chunk_texts = [c["chunk_text"] for c in document]
+    # Convert document to list of (chunk_id, chunk_text) tuples
+    chunk_tuples = [(c["chunk_id"], c["chunk_text"]) for c in document]
 
     # Run the v8 pipeline
     step_dfs = run_dataset(
         dataset_id=dataset_id,
-        document=chunk_texts,
+        document=chunk_tuples,
         process=process_text,
         llm=llm_v8,
         prompts=PROMPTS_V8,
@@ -809,7 +840,9 @@ def analyze():
     if save_process and process_name and not process_id:
         new_id = process_name.lower().replace(" ", "-")
         if new_id not in PROCESSES:
-            PROCESSES[new_id] = {"name": process_name, "description": f"User-added: {process_name}", "text": process_text}
+            process_data = {"name": process_name, "description": f"User-added: {process_name}", "text": process_text}
+            PROCESSES[new_id] = process_data
+            _save_process_to_disk(new_id, process_data)
 
     selected_regulation = REGULATIONS.get(regulation_id)
     if not selected_regulation:
