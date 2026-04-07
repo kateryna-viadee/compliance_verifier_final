@@ -21,11 +21,14 @@ interface TextViewerProps {
   process: string
   segments: ComplianceSegment[]
   activeSegmentId: string | null
+  onSegmentSelect?: (segmentId: string) => void
 }
 
 interface TextPart {
   text: string
   isHighlighted: boolean
+  segmentId?: string | null
+  category?: string | null
 }
 
 /** A matched region in the process text (start inclusive, end exclusive). */
@@ -345,45 +348,82 @@ function findAllRegions(
   return merged
 }
 
+/** A region tagged with the segment it belongs to */
+interface TaggedRegion {
+  start: number
+  end: number
+  segmentId: string
+  category: string
+}
+
+/** Priority for overlapping underlines: most severe category wins */
+const SEVERITY: Record<string, number> = {
+  "NON-COMPLIANT": 3,
+  "NO EVIDENCE": 2,
+  "COMPLIANT": 1,
+}
+
 function buildParts(
   process: string,
   segments: ComplianceSegment[],
   activeSegmentId: string | null
 ): TextPart[] {
-  const activeSegment = segments.find((s) => s.id === activeSegmentId)
-
-  if (!activeSegment) {
-    return [{ text: process, isHighlighted: false }]
-  }
-
-  const regions = findAllRegions(
-    process,
-    activeSegment.extracted_process_segment
-  )
-
-  if (regions.length === 0) {
-    return [{ text: process, isHighlighted: false }]
-  }
-
-  const parts: TextPart[] = []
-  let cursor = 0
-
-  for (const region of regions) {
-    if (region.start > cursor) {
-      parts.push({
-        text: process.slice(cursor, region.start),
-        isHighlighted: false,
-      })
+  // Find regions for ALL segments
+  const allRegions: TaggedRegion[] = []
+  for (const seg of segments) {
+    if (!seg.extracted_process_segment) continue
+    const regions = findAllRegions(process, seg.extracted_process_segment)
+    for (const r of regions) {
+      allRegions.push({ ...r, segmentId: seg.id, category: seg.category })
     }
-    parts.push({
-      text: process.slice(region.start, region.end),
-      isHighlighted: true,
-    })
-    cursor = region.end
   }
 
-  if (cursor < process.length) {
-    parts.push({ text: process.slice(cursor), isHighlighted: false })
+  if (allRegions.length === 0) {
+    return [{ text: process, isHighlighted: false }]
+  }
+
+  // Sort by start position
+  allRegions.sort((a, b) => a.start - b.start)
+
+  // Build a coverage map: for each character position, track the best segment
+  // Active segment always wins; otherwise highest severity wins
+  const charMap = new Array<{ segmentId: string; category: string } | null>(process.length).fill(null)
+
+  for (const r of allRegions) {
+    for (let i = r.start; i < r.end && i < process.length; i++) {
+      const existing = charMap[i]
+      if (!existing) {
+        charMap[i] = { segmentId: r.segmentId, category: r.category }
+      } else if (r.segmentId === activeSegmentId) {
+        charMap[i] = { segmentId: r.segmentId, category: r.category }
+      } else if (existing.segmentId !== activeSegmentId) {
+        // Higher severity wins
+        if ((SEVERITY[r.category] || 0) > (SEVERITY[existing.category] || 0)) {
+          charMap[i] = { segmentId: r.segmentId, category: r.category }
+        }
+      }
+    }
+  }
+
+  // Convert char map into runs of same (segmentId, category)
+  const parts: TextPart[] = []
+  let runStart = 0
+  let runInfo = charMap[0]
+
+  for (let i = 1; i <= process.length; i++) {
+    const cur = i < process.length ? charMap[i] : null
+    const same = cur?.segmentId === runInfo?.segmentId
+
+    if (!same) {
+      parts.push({
+        text: process.slice(runStart, i),
+        isHighlighted: runInfo?.segmentId === activeSegmentId,
+        segmentId: runInfo?.segmentId ?? null,
+        category: runInfo?.category ?? null,
+      })
+      runStart = i
+      runInfo = cur
+    }
   }
 
   return parts
@@ -393,6 +433,7 @@ export function TextViewer({
   process,
   segments,
   activeSegmentId,
+  onSegmentSelect,
 }: TextViewerProps) {
   const highlightRef = useRef<HTMLSpanElement>(null)
 
@@ -432,19 +473,39 @@ export function TextViewer({
       </div>
       <ScrollArea className="flex-1 min-h-0">
         <article className="px-6 py-5 leading-relaxed text-sm text-foreground/90 max-w-none">
-          {parts.map((part, i) => (
-            <span
-              key={`${activeSegmentId}-${i}`}
-              ref={i === firstHighlightIdx ? highlightRef : undefined}
-              className={cn(
-                "transition-all duration-300 whitespace-pre-wrap",
-                part.isHighlighted &&
-                  "bg-highlight/50 text-highlight-foreground rounded-sm ring-2 ring-highlight/60 ring-offset-1 ring-offset-background px-0.5 -mx-0.5"
-              )}
-            >
-              {part.text}
-            </span>
-          ))}
+          {parts.map((part, i) => {
+            const color =
+              part.category === "NON-COMPLIANT" ? "#ef4444" :
+              part.category === "COMPLIANT" ? "#10b981" :
+              part.category === "NO EVIDENCE" ? "#9ca3af" :
+              undefined
+
+            return (
+              <span
+                key={`${activeSegmentId}-${i}`}
+                ref={i === firstHighlightIdx ? highlightRef : undefined}
+                className={cn(
+                  "transition-all duration-300 whitespace-pre-wrap",
+                  part.isHighlighted &&
+                    "bg-highlight/50 text-highlight-foreground rounded-sm ring-2 ring-highlight/60 ring-offset-1 ring-offset-background px-0.5 -mx-0.5",
+                  !part.isHighlighted && part.segmentId &&
+                    "cursor-pointer hover:bg-primary/10"
+                )}
+                style={
+                  !part.isHighlighted && part.segmentId && color
+                    ? { borderBottom: `2px solid ${color}`, paddingBottom: 1 }
+                    : undefined
+                }
+                onClick={
+                  part.segmentId && onSegmentSelect
+                    ? () => onSegmentSelect(part.segmentId!)
+                    : undefined
+                }
+              >
+                {part.text}
+              </span>
+            )
+          })}
         </article>
       </ScrollArea>
     </div>

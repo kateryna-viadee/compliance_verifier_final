@@ -79,7 +79,7 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
   )
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null)
   const [activeCategories, setActiveCategories] = useState<Set<string>>(
-    () => new Set(["NON-COMPLIANT"])
+    () => new Set(["NON-COMPLIANT", "COMPLIANT", "NO EVIDENCE"])
   )
   const [jobs, setJobs] = useState<AnalysisJob[]>([])
 
@@ -216,7 +216,7 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
   const handleBack = useCallback(() => {
     setState({ phase: "select" })
     setActiveSegmentId(null)
-    setActiveCategories(new Set(["NON-COMPLIANT"]))
+    setActiveCategories(new Set(["NON-COMPLIANT", "COMPLIANT", "NO EVIDENCE"]))
     onBackToSelector?.()
   }, [onBackToSelector])
 
@@ -338,31 +338,43 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
           </ResizablePanel>
           <ResizableHandle withHandle />
           <ResizablePanel defaultSize={40} minSize={25}>
-            <ResizablePanelGroup direction="vertical" className="h-full">
-              <ResizablePanel defaultSize={50} minSize={25}>
-                <div className="h-full overflow-hidden">
-                  <TextViewer
-                    process={data.process}
-                    segments={data.segments}
-                    activeSegmentId={activeSegmentId}
-                  />
-                </div>
-              </ResizablePanel>
-              <ResizableHandle withHandle />
-              <ResizablePanel defaultSize={50} minSize={20}>
-                <div className="h-full border-t bg-card">
-                  <div className="px-3 py-2 border-b text-xs font-medium text-muted-foreground">
-                    BPMN Model
-                  </div>
-                  <div className="h-[calc(100%-33px)]">
-                    <BpmnViewer
-                      bpmnXml={data.bpmnXml}
-                      highlightedElementId={highlightedBpmnElementId}
+            {data.bpmnXml ? (
+              <ResizablePanelGroup direction="vertical" className="h-full">
+                <ResizablePanel defaultSize={50} minSize={25}>
+                  <div className="h-full overflow-hidden">
+                    <TextViewer
+                      process={data.process}
+                      segments={data.segments}
+                      activeSegmentId={activeSegmentId}
+                      onSegmentSelect={(id) => setActiveSegmentId(id)}
                     />
                   </div>
-                </div>
-              </ResizablePanel>
-            </ResizablePanelGroup>
+                </ResizablePanel>
+                <ResizableHandle withHandle />
+                <ResizablePanel defaultSize={50} minSize={20}>
+                  <div className="h-full border-t bg-card">
+                    <div className="px-3 py-2 border-b text-xs font-medium text-muted-foreground">
+                      BPMN Model
+                    </div>
+                    <div className="h-[calc(100%-33px)]">
+                      <BpmnViewer
+                        bpmnXml={data.bpmnXml}
+                        highlightedElementId={highlightedBpmnElementId}
+                      />
+                    </div>
+                  </div>
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            ) : (
+              <div className="h-full overflow-hidden">
+                <TextViewer
+                  process={data.process}
+                  segments={data.segments}
+                  activeSegmentId={activeSegmentId}
+                  onSegmentSelect={(id) => setActiveSegmentId(id)}
+                />
+              </div>
+            )}
           </ResizablePanel>
           <ResizableHandle withHandle />
           <ResizablePanel defaultSize={30} minSize={20}>
@@ -379,6 +391,7 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
                         segments={data.segments}
                         activeSegmentId={activeSegmentId}
                         ambiguousTerm={activeSegment?.s4_ambiguous_term && activeSegment.s4_ambiguous_term !== "None" ? activeSegment.s4_ambiguous_term : null}
+                        onSegmentSelect={(id) => setActiveSegmentId(id)}
                       />
                     </div>
                   </div>

@@ -28,6 +28,7 @@ interface ChunkViewerProps {
   segments: ComplianceSegment[]
   activeSegmentId: string | null
   ambiguousTerm?: string | null
+  onSegmentSelect?: (segmentId: string) => void
 }
 
 export function ChunkViewer({
@@ -35,6 +36,7 @@ export function ChunkViewer({
   segments,
   activeSegmentId,
   ambiguousTerm,
+  onSegmentSelect,
 }: ChunkViewerProps) {
   const highlightRef = useRef<HTMLSpanElement>(null)
 
@@ -81,8 +83,14 @@ export function ChunkViewer({
                 className={cn(
                   "transition-all duration-300 whitespace-pre-wrap",
                   isActive &&
-                    "bg-highlight/50 text-highlight-foreground rounded-sm ring-2 ring-highlight/60 ring-offset-1 ring-offset-background px-0.5 -mx-0.5"
+                    "bg-highlight/50 text-highlight-foreground rounded-sm ring-2 ring-highlight/60 ring-offset-1 ring-offset-background px-0.5 -mx-0.5",
+                  onSegmentSelect && "cursor-pointer hover:bg-muted/50"
                 )}
+                onClick={() => {
+                  if (!onSegmentSelect) return
+                  const match = segments.find((s) => s.chunk_id === chunk.chunk_id)
+                  if (match) onSegmentSelect(match.id)
+                }}
               >
                 {ambiguousTerm ? highlightTerm(chunk.chunk_text, ambiguousTerm) : chunk.chunk_text}
                 {i < chunks.length - 1 ? "\n\n" : ""}

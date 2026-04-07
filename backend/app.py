@@ -637,8 +637,15 @@ def run_pipeline_v8(
     df_final["regulation_name"] = regulation_name
 
     # Save output Excel for history (after compliance_report is computed)
-    output_path = os.path.join(HISTORY_FOLDER, f"{dataset_id}_{int(time.time())}.xlsx")
+    history_basename = f"{dataset_id}_{int(time.time())}"
+    output_path = os.path.join(HISTORY_FOLDER, f"{history_basename}.xlsx")
     df_final.to_excel(output_path, index=False)
+
+    # Save BPMN XML alongside the Excel if provided
+    if bpmn_xml:
+        bpmn_path = os.path.join(HISTORY_FOLDER, f"{history_basename}.bpmn")
+        with open(bpmn_path, "w", encoding="utf-8") as f:
+            f.write(bpmn_xml)
 
     return df_final
 
@@ -1102,11 +1109,18 @@ def get_history_item(item_id):
                 if pd.notna(row["chunk_id"]) and pd.notna(row["chunk_text"])
             ]
         
+        # Load BPMN XML if a matching .bpmn file exists
+        bpmn_xml = None
+        bpmn_path = os.path.join(HISTORY_FOLDER, os.path.splitext(safe_filename)[0] + ".bpmn")
+        if os.path.exists(bpmn_path):
+            with open(bpmn_path, "r", encoding="utf-8") as bf:
+                bpmn_xml = bf.read()
+
         return jsonify({
             "process": process_text,
             "segments": build_segments(df),
             "chunks": chunks if chunks else [{"chunk_id": "history", "chunk_text": "Historical results"}],
-            "bpmnXml": None,
+            "bpmnXml": bpmn_xml,
         })
     except Exception as e:
         print(f"[History] Error loading {item_id}: {e}")
