@@ -35,8 +35,12 @@ def get_llm_response(prompt, client, seed=42):
             {"role": "user", "content": prompt}
         ],
         seed=123,  # keeps results reproducible
+        max_tokens=16384,
     )
-    return response.choices[0].message.content
+    choice = response.choices[0]
+    if choice.finish_reason == "length":
+        print(f"[LLM] WARNING: response truncated (finish_reason=length)")
+    return choice.message.content
 
 
 def evaluate_chunk(document, process, llm_client=None, evaluation_prompt_template=None):
@@ -735,6 +739,48 @@ def find_top_similar_sentences(query: str, original_text: str, threshold: float 
 
     return filtered
 
+def strip_bpmn_layout(bpmn_xml: str) -> str:
+    """Remove layout/diagram data and technical IDs from BPMN XML to reduce size.
+
+    Strips:
+      - The entire bpmndi:BPMNDiagram section (coordinates, waypoints, bounds)
+      - All 'id' attributes (technical, not needed for text description)
+      - All empty attributes
+    Keeps:
+      - Process structure (tasks, gateways, events, sequence flows)
+      - Names, documentation, annotations, lanes, participants
+    """
+    try:
+        root = ET.fromstring(bpmn_xml)
+    except ET.ParseError:
+        return bpmn_xml  # fallback: return original if parsing fails
+
+    # Collect namespaces for diagram elements to remove
+    diagram_tags = set()
+    for ns in ['http://www.omg.org/spec/BPMN/20100524/DI',
+               'http://www.omg.org/spec/DD/20100524/DI',
+               'http://www.omg.org/spec/DD/20100524/DC']:
+        for elem in root.iter():
+            if elem.tag.startswith(f'{{{ns}}}'):
+                diagram_tags.add(elem.tag)
+
+    # Remove diagram elements (bpmndi:BPMNDiagram and children)
+    for parent in root.iter():
+        to_remove = [child for child in parent if child.tag in diagram_tags
+                     or child.tag.split('}')[-1] in ('BPMNDiagram', 'BPMNPlane', 'BPMNShape', 'BPMNEdge', 'BPMNLabel')]
+        for child in to_remove:
+            parent.remove(child)
+
+    # Strip id attributes and empty attributes from all elements
+    for elem in root.iter():
+        attrs_to_remove = [k for k, v in elem.attrib.items()
+                           if k == 'id' or k.endswith('}id') or not v.strip()]
+        for attr in attrs_to_remove:
+            del elem.attrib[attr]
+
+    return ET.tostring(root, encoding='unicode')
+
+
 def convert_bpmn_to_text(bpmn_content, llm_client=None):
     """
     Convert a BPMN XML file to plain text using LLM.
@@ -770,7 +816,9 @@ Ensure that the summary is informative and readable without adding another summa
 Input:
 {content}"""
 
-    evaluation_prompt = prompt_bpmn_to_text.format(content=bpmn_content)
+    # Strip layout data to reduce input size and leave room for output
+    cleaned_xml = strip_bpmn_layout(bpmn_content)
+    evaluation_prompt = prompt_bpmn_to_text.format(content=cleaned_xml)
     bpmn_text = get_llm_response(evaluation_prompt, llm_client)
 
     return bpmn_text
