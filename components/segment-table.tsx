@@ -11,21 +11,7 @@ import {
 } from "@/components/ui/table"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Checkbox } from "@/components/ui/checkbox"
-import { cn } from "@/lib/utils"
-
-/** Derive dot color from the category string */
-function getCategoryDotClass(category: string): string {
-  switch (category) {
-    case "COMPLIANT":
-      return "bg-emerald-500"
-    case "NON-COMPLIANT":
-      return "bg-red-500"
-    case "NO EVIDENCE":
-      return "bg-neutral-400"
-    default:
-      return "bg-neutral-400"
-  }
-}
+import { cn, categoryLabel, getCategoryColor } from "@/lib/utils"
 
 /** Determine the 3-state type for a segment (used for inline icons only) */
 function getFilterState(segment: ComplianceSegment): "consistent" | "assumption" | "ambiguous" {
@@ -35,12 +21,13 @@ function getFilterState(segment: ComplianceSegment): "consistent" | "assumption"
   return "consistent"
 }
 
-/** Render the inline icon (⚠ for assumption, nothing otherwise) */
-function FilterIcon({ state }: { state: "consistent" | "assumption" | "ambiguous" }) {
-  if (state === "assumption") {
+/** Render the inline icon (⚠ whenever an assumption was made) */
+function FilterIcon({ state, segment }: { state: "consistent" | "assumption" | "ambiguous"; segment: ComplianceSegment }) {
+  if (state === "assumption" || (segment.s4_assumption_needed === "Yes" && segment.s4_assumption && segment.s4_assumption !== "None")) {
     return (
       <span
-        className="inline-flex items-center justify-center h-2.5 w-2.5 text-orange-500"
+        className="inline-flex items-center justify-center h-2.5 w-2.5"
+        style={{ color: "#8b5cf6" }}
         title="Assumption needed"
         aria-label="Assumption needed"
       >
@@ -85,8 +72,19 @@ export function SegmentTable({
               className="h-3.5 w-3.5 border-red-400 data-[state=checked]:bg-red-500 data-[state=checked]:border-red-500"
             />
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span className="block h-2 w-2 rounded-full bg-red-500" />
-              Non-Compliant ({categoryCounts["NON-COMPLIANT"] || 0})
+              <span className="block h-2 w-2 rounded-full" style={{ backgroundColor: "#ef4444" }} />
+              Violation ({categoryCounts["NON-COMPLIANT"] || 0})
+            </span>
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <Checkbox
+              checked={activeCategories.has("NO EVIDENCE")}
+              onCheckedChange={() => onToggleCategory("NO EVIDENCE")}
+              className="h-3.5 w-3.5 border-orange-400 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
+            />
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <span className="block h-2 w-2 rounded-full" style={{ backgroundColor: "#f97316" }} />
+              Omission ({categoryCounts["NO EVIDENCE"] || 0})
             </span>
           </label>
           <label className="flex items-center gap-1.5 cursor-pointer">
@@ -96,19 +94,8 @@ export function SegmentTable({
               className="h-3.5 w-3.5 border-emerald-400 data-[state=checked]:bg-emerald-500 data-[state=checked]:border-emerald-500"
             />
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span className="block h-2 w-2 rounded-full bg-emerald-500" />
-              Compliant ({categoryCounts["COMPLIANT"] || 0})
-            </span>
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <Checkbox
-              checked={activeCategories.has("NO EVIDENCE")}
-              onCheckedChange={() => onToggleCategory("NO EVIDENCE")}
-              className="h-3.5 w-3.5 border-neutral-300 data-[state=checked]:bg-neutral-400 data-[state=checked]:border-neutral-400"
-            />
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span className="block h-2 w-2 rounded-full bg-neutral-400" />
-              No Evidence ({categoryCounts["NO EVIDENCE"] || 0})
+              <span className="block h-2 w-2 rounded-full" style={{ backgroundColor: "#10b981" }} />
+              Compliance ({categoryCounts["COMPLIANT"] || 0})
             </span>
           </label>
         </div>
@@ -167,49 +154,39 @@ export function SegmentTable({
                     >
                       {/* Filter State Icon + Category Dot */}
                       <div className="pt-1.5 pr-3 shrink-0 flex flex-col items-center gap-0.5">
-                        <FilterIcon state={filterState} />
+                        <FilterIcon state={filterState} segment={segment} />
                         {isS3Split ? (
                           <div className="flex h-2.5 w-2.5" title="S3 disagreement">
                             <div
-                              className={cn(
-                                "w-1/2 rounded-l-full",
-                                getCategoryDotClass(segment.category)
-                              )}
+                              className="w-1/2 rounded-l-full"
+                              style={{ backgroundColor: getCategoryColor(segment.category) }}
                             />
                             <div
-                              className={cn(
-                                "w-1/2 rounded-r-full",
-                                getCategoryDotClass(
-                                  segment.s3_category_1 === segment.category
-                                    ? (segment.s3_category_2 ?? "")
-                                    : (segment.s3_category_1 ?? "")
-                                )
-                              )}
+                              className="w-1/2 rounded-r-full"
+                              style={{ backgroundColor: getCategoryColor(
+                                segment.s3_category_1 === segment.category
+                                  ? (segment.s3_category_2 ?? "")
+                                  : (segment.s3_category_1 ?? "")
+                              ) }}
                             />
                           </div>
                         ) : isS4Split ? (
                           <div className="flex h-2.5 w-2.5" title="S4 disagrees">
                             <div
-                              className={cn(
-                                "w-1/2 rounded-l-full",
-                                getCategoryDotClass(segment.category)
-                              )}
+                              className="w-1/2 rounded-l-full"
+                              style={{ backgroundColor: getCategoryColor(segment.category) }}
                             />
                             <div
-                              className={cn(
-                                "w-1/2 rounded-r-full",
-                                getCategoryDotClass(segment.s4_compliance_category ?? "")
-                              )}
+                              className="w-1/2 rounded-r-full"
+                              style={{ backgroundColor: getCategoryColor(segment.s4_compliance_category ?? "") }}
                             />
                           </div>
                         ) : (
                           <span
-                            className={cn(
-                              "block h-2.5 w-2.5 rounded-full",
-                              getCategoryDotClass(segment.category)
-                            )}
-                            title={segment.category}
-                            aria-label={`Category: ${segment.category}`}
+                            className="block h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: getCategoryColor(segment.category) }}
+                            title={categoryLabel(segment.category)}
+                            aria-label={`Category: ${categoryLabel(segment.category)}`}
                           />
                         )}
                       </div>

@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react"
 import type { DocumentData, ComplianceSegment, AnalysisJob } from "@/lib/types"
-import { cn } from "@/lib/utils"
+import { cn, categoryLabel } from "@/lib/utils"
 import { SegmentTable } from "@/components/segment-table"
 import { TextViewer } from "@/components/text-viewer"
 import { ChunkViewer } from "@/components/chunk-viewer"
@@ -416,7 +416,7 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
                               {activeSegment.s3_category_1 === activeSegment.s3_category_2 ? (
                                 // Both runs agree
                                 <div className="text-xs text-foreground leading-relaxed">
-                                  <span className="font-medium">{activeSegment.s3_category_1}:</span> {activeSegment.s3_reasoning_1}
+                                  <span className="font-medium">{categoryLabel(activeSegment.s3_category_1 ?? "")}:</span> {activeSegment.s3_reasoning_1}
                                 </div>
                               ) : (
                                 // Runs disagree — show both
@@ -426,9 +426,9 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
                                       "text-xs leading-relaxed px-2 py-1 rounded",
                                       activeSegment.s3_category_1 === "COMPLIANT" ? "bg-emerald-100 text-emerald-900" :
                                       activeSegment.s3_category_1 === "NON-COMPLIANT" ? "bg-red-100 text-red-900" :
-                                      "bg-neutral-100 text-neutral-900"
+                                      "bg-orange-100 text-orange-900"
                                     )}>
-                                      <span className="font-medium">{activeSegment.s3_category_1} (Run 1):</span> {activeSegment.s3_reasoning_1}
+                                      <span className="font-medium">{categoryLabel(activeSegment.s3_category_1 ?? "")} (Run 1):</span> {activeSegment.s3_reasoning_1}
                                     </div>
                                   )}
                                   {activeSegment.s3_reasoning_2 && (
@@ -436,9 +436,9 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
                                       "text-xs leading-relaxed px-2 py-1 rounded",
                                       activeSegment.s3_category_2 === "COMPLIANT" ? "bg-emerald-100 text-emerald-900" :
                                       activeSegment.s3_category_2 === "NON-COMPLIANT" ? "bg-red-100 text-red-900" :
-                                      "bg-neutral-100 text-neutral-900"
+                                      "bg-orange-100 text-orange-900"
                                     )}>
-                                      <span className="font-medium">{activeSegment.s3_category_2} (Run 2):</span> {activeSegment.s3_reasoning_2}
+                                      <span className="font-medium">{categoryLabel(activeSegment.s3_category_2 ?? "")} (Run 2):</span> {activeSegment.s3_reasoning_2}
                                     </div>
                                   )}
                                 </div>
@@ -450,8 +450,8 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
                           {activeSegment?.s4_assumption_needed === "Yes" && (
                             <div className="space-y-2 border-t pt-3">
                               <div className="flex items-center gap-1">
-                                <span className="text-orange-500 font-bold">⚠</span>
-                                <h4 className="text-xs font-semibold text-orange-700">Assumptions needed</h4>
+                                <span className="font-bold" style={{ color: "#8b5cf6" }}>⚠</span>
+                                <h4 className="text-xs font-semibold" style={{ color: "#6d28d9" }}>Assumptions needed</h4>
                               </div>
                               {activeSegment.s4_ambiguous_term && activeSegment.s4_ambiguous_term !== "None" && (
                                 <div className="text-xs text-foreground">
@@ -468,9 +468,9 @@ export function ComplianceVerifier({ initialData, onBackToSelector }: Compliance
                                   "text-xs leading-relaxed px-2 py-1 rounded",
                                   activeSegment.s4_compliance_category === "COMPLIANT" ? "bg-emerald-100 text-emerald-900" :
                                   activeSegment.s4_compliance_category === "NON-COMPLIANT" ? "bg-red-100 text-red-900" :
-                                  "bg-orange-100 text-orange-900"
+                                  "bg-violet-100 text-violet-900"
                                 )}>
-                                  <span className="font-medium">Assumption ({activeSegment.s4_compliance_category}):</span> {activeSegment.s4_assumption}
+                                  <span className="font-medium">Assumption ({categoryLabel(activeSegment.s4_compliance_category ?? "")}):</span> {activeSegment.s4_assumption}
                                 </div>
                               )}
                             </div>

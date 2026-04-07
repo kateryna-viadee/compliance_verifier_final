@@ -744,7 +744,8 @@ def strip_bpmn_layout(bpmn_xml: str) -> str:
 
     Strips:
       - The entire bpmndi:BPMNDiagram section (coordinates, waypoints, bounds)
-      - All 'id' attributes (technical, not needed for text description)
+      - Most 'id' attributes (technical, not needed for text description)
+        except IDs referenced by associations (to preserve annotation links)
       - All empty attributes
     Keeps:
       - Process structure (tasks, gateways, events, sequence flows)
@@ -771,10 +772,25 @@ def strip_bpmn_layout(bpmn_xml: str) -> str:
         for child in to_remove:
             parent.remove(child)
 
-    # Strip id attributes and empty attributes from all elements
+    # Collect IDs referenced by associations so annotation links survive
+    referenced_ids = set()
     for elem in root.iter():
+        local_name = elem.tag.split('}')[-1]
+        if local_name == 'association':
+            for attr in ('sourceRef', 'targetRef'):
+                ref = elem.attrib.get(attr, '')
+                if ref:
+                    referenced_ids.add(ref)
+
+    # Strip id attributes and empty attributes from all elements,
+    # but preserve IDs that are needed for annotation associations
+    for elem in root.iter():
+        elem_id = elem.attrib.get('id', '') or elem.attrib.get(
+            next((k for k in elem.attrib if k.endswith('}id')), ''), '')
+        keep_id = elem_id in referenced_ids
         attrs_to_remove = [k for k, v in elem.attrib.items()
-                           if k == 'id' or k.endswith('}id') or not v.strip()]
+                           if ((k == 'id' or k.endswith('}id')) and not keep_id)
+                           or not v.strip()]
         for attr in attrs_to_remove:
             del elem.attrib[attr]
 

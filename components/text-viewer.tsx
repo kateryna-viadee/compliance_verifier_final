@@ -477,7 +477,7 @@ export function TextViewer({
             const color =
               part.category === "NON-COMPLIANT" ? "#ef4444" :
               part.category === "COMPLIANT" ? "#10b981" :
-              part.category === "NO EVIDENCE" ? "#9ca3af" :
+              part.category === "NO EVIDENCE" ? "#f97316" :
               undefined
 
             return (

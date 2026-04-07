@@ -3,7 +3,7 @@
 import { useEffect, useRef, useMemo, useCallback } from "react"
 import type { RegulationChunk, ComplianceSegment } from "@/lib/types"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { cn } from "@/lib/utils"
+import { cn, getCategoryColor } from "@/lib/utils"
 import { BookOpen } from "lucide-react"
 
 /** Split text on a term (case-insensitive) and wrap matches in orange highlight */
@@ -46,6 +46,20 @@ export function ChunkViewer({
     return seg?.chunk_id ?? null
   }, [activeSegmentId, segments])
 
+  /** Map chunk_id → category color for underline; pick the most severe category if multiple segments share a chunk */
+  const chunkColorMap = useMemo(() => {
+    const priority: Record<string, number> = { "NON-COMPLIANT": 3, "NO EVIDENCE": 2, "COMPLIANT": 1 }
+    const map = new Map<string, string>()
+    for (const seg of segments) {
+      if (!seg.chunk_id || !seg.category) continue
+      const existing = map.get(seg.chunk_id)
+      if (!existing || (priority[seg.category] || 0) > (priority[existing] || 0)) {
+        map.set(seg.chunk_id, seg.category)
+      }
+    }
+    return map
+  }, [segments])
+
   const scrollToHighlight = useCallback(() => {
     if (highlightRef.current) {
       highlightRef.current.scrollIntoView({
@@ -76,6 +90,8 @@ export function ChunkViewer({
         <article className="px-6 py-5 leading-relaxed text-sm text-foreground/90 max-w-none">
           {chunks.map((chunk, i) => {
             const isActive = chunk.chunk_id === activeChunkId
+            const chunkCategory = chunkColorMap.get(chunk.chunk_id)
+            const underlineColor = chunkCategory ? getCategoryColor(chunkCategory) : undefined
             return (
               <span
                 key={chunk.chunk_id}
@@ -86,6 +102,12 @@ export function ChunkViewer({
                     "bg-highlight/50 text-highlight-foreground rounded-sm ring-2 ring-highlight/60 ring-offset-1 ring-offset-background px-0.5 -mx-0.5",
                   onSegmentSelect && "cursor-pointer hover:bg-muted/50"
                 )}
+                style={underlineColor ? {
+                  textDecoration: "underline",
+                  textDecorationColor: underlineColor,
+                  textUnderlineOffset: "3px",
+                  textDecorationThickness: "2px",
+                } : undefined}
                 onClick={() => {
                   if (!onSegmentSelect) return
                   const match = segments.find((s) => s.chunk_id === chunk.chunk_id)
