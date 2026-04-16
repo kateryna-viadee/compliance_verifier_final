@@ -38,5 +38,10 @@
     "name": "Prozess2",
     "description": "User-added: Prozess2",
     "text": "Prozess (umgesetzt mit genspark.ai als Agent): \nE-Mail erhalten\nKlassifikation: Ist das eine Bewerbung?\nFalls ja: Prüfe die Unterlagen auf Matches mit offenen Stellen\nFalls es mindestens einen Match gibt: Prüfe die Unterlagen auf Vollständigkeit\nFalls Unvollständig: Suche eine Telefonummer und bitte um das Nachsenden der fehlenden Unterlagen (gib Dich nach Möglichkeit nicht als Agent zu erkennen)."
+  },
+  "ki--test-bewerbung": {
+    "name": "KI  Test Bewerbung",
+    "description": "User-added: KI  Test Bewerbung",
+    "text": "E-Mail erhalten\nKlassifikation: Ist das eine Bewerbung?\nFalls ja: Prüfe die Unterlagen auf Matches mit offenen Stellen\nFalls es mindestens einen Match gibt: Prüfe die Unterlagen auf Vollständigkeit\nFalls Unvollständig: Suche eine Telefonummer und bitte um das Nachsenden der fehlenden Unterlagen (gib Dich nach Möglichkeit nicht als Agent zu erkennen)."
   }
 }

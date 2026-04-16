@@ -80,11 +80,11 @@ export function SegmentTable({
             <Checkbox
               checked={activeCategories.has("NO EVIDENCE")}
               onCheckedChange={() => onToggleCategory("NO EVIDENCE")}
-              className="h-3.5 w-3.5 border-orange-400 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
+              className="h-3.5 w-3.5 border-gray-400 data-[state=checked]:bg-gray-400 data-[state=checked]:border-gray-400"
             />
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span className="block h-2 w-2 rounded-full" style={{ backgroundColor: "#f97316" }} />
-              Omission ({categoryCounts["NO EVIDENCE"] || 0})
+              <span className="block h-2 w-2 rounded-full" style={{ backgroundColor: "#9ca3af" }} />
+              No evidence ({categoryCounts["NO EVIDENCE"] || 0})
             </span>
           </label>
           <label className="flex items-center gap-1.5 cursor-pointer">

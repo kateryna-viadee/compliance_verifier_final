@@ -13,9 +13,9 @@ export function getCategoryColor(category: string): string {
     case "NON-COMPLIANT":
       return "#ef4444"
     case "NO EVIDENCE":
-      return "#f97316"
+      return "#9ca3af"
     default:
-      return "#f97316"
+      return "#9ca3af"
   }
 }
 
@@ -27,7 +27,7 @@ export function categoryLabel(category: string): string {
     case "NON-COMPLIANT":
       return "Violation"
     case "NO EVIDENCE":
-      return "Omission"
+      return "No evidence"
     default:
       return category
   }
